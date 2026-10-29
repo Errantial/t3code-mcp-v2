@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 // Read-only live verification. Tokens and thread contents are never printed.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { loadHttpToken } from "../dist/config.js";
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const expectedVersion = JSON.parse(
+  readFileSync(join(root, "package.json"), "utf8"),
+).version;
 const url = new URL(process.argv[2] ?? "http://127.0.0.1:3774/");
 const token = loadHttpToken();
 if (!token) throw new Error("No MCP_HTTP_TOKEN: configure the server first");
@@ -15,7 +22,11 @@ for (const headers of [{}, { Authorization: "Bearer invalid-verification-token" 
 const client = new Client({ name: "v2-read-only-verification", version: "1" });
 try {
   await client.connect(new StreamableHTTPClientTransport(url, { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
-  assert.equal(client.getServerVersion()?.version, "0.2.0", "Expected the supplied v2 bridge build");
+  assert.equal(
+    client.getServerVersion()?.version,
+    expectedVersion,
+    `Expected t3code-mcp ${expectedVersion} from package.json`,
+  );
   const tools = await client.listTools();
   assert.equal(tools.tools.length, 19);
   async function call(name, args = {}) {

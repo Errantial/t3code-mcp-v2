@@ -141,7 +141,7 @@ post-restart checks, and no known protocol blocker is hidden by a success result
 
 ## Implementation result — 2026-10-29
 
-Implemented and deployed as t3code-mcp 0.2.0. Build, 13 regression tests, and all
+Implemented and deployed as t3code-mcp 0.3.0. Build, 32 regression tests, and all
 19 tools in live stdio/local-HTTP/public-HTTPS integration suites passed.
 Approval acceptance/decline and questions/answers were exercised with real agent
 requests in a dedicated scratch project. Credentials and endpoint are unchanged.
