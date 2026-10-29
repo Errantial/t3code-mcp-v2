@@ -29,6 +29,10 @@ export interface LatestTurn {
 }
 
 export interface Session {
+  /**
+   * Always the T3 app-thread id. A provider session/thread belongs to the
+   * thread; it is never the thread's identity.
+   */
   threadId: string;
   status:
     | "idle"
@@ -41,6 +45,10 @@ export interface Session {
     | (string & {});
   providerName?: string | null;
   providerInstanceId?: string | null;
+  /** Provider-native conversation handle, exposed for diagnostics only. */
+  providerThreadId?: string | null;
+  /** Provider process handle, exposed for diagnostics only. */
+  providerSessionId?: string | null;
   runtimeMode?: string;
   activeTurnId?: string | null;
   lastError?: unknown;
@@ -48,10 +56,21 @@ export interface Session {
 }
 
 export interface ThreadShell {
+  /** Canonical T3 app-thread id. Provider switches keep this id. */
   id: string;
   projectId: string;
   title: string | null;
   modelSelection?: ModelSelection | null;
+  providerInstanceId?: string | null;
+  /** Providers this thread has run on, oldest first. */
+  providerInstanceHistory?: string[];
+  /** Provider-native thread currently bound to this app thread. */
+  activeProviderThreadId?: string | null;
+  lineage?: {
+    parentThreadId: string | null;
+    relationshipToParent: string | null;
+    rootThreadId: string;
+  } | null;
   runtimeMode?: string;
   interactionMode?: string;
   branch?: string | null;
@@ -162,6 +181,36 @@ export function attentionOf(t: ThreadShell): Attention {
   )
     return "done";
   return "idle";
+}
+
+/** The provider currently attached to a thread, independent of thread identity. */
+export function providerOf(t: ThreadShell): string | null {
+  return (
+    t.modelSelection?.instanceId ??
+    t.session?.providerInstanceId ??
+    t.providerInstanceId ??
+    null
+  );
+}
+
+/**
+ * Resolve an id coming from a caller (or from older MCP state) to the canonical
+ * T3 app-thread id. Provider session/thread ids are aliases of their thread,
+ * never separate threads.
+ */
+export function canonicalThreadId(threads: ThreadShell[], id: string): string {
+  if (!id) return id;
+  if (threads.some((t) => t.id === id)) return id;
+  const owner = threads.find(
+    (t) =>
+      t.activeProviderThreadId === id || t.session?.providerThreadId === id,
+  );
+  return owner?.id ?? id;
+}
+
+/** Ids that T3 scopes to a provider rather than to an app thread. */
+export function isProviderScopedThreadId(id: string): boolean {
+  return /^(provider-thread:|provider-session:|thread:provider:)/.test(id);
 }
 
 export interface PendingRequest {

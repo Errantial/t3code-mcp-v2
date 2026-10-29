@@ -49,6 +49,12 @@ claude mcp add --scope user t3code -- node /Users/thomascrundwell/Documents/proj
 - `send_message` queues behind active work and returns `messageId` and `runId`.
   Pass that `runId` to `wait_for_turn` to wait for the exact reply. Without it,
   the wait targets the latest run when the call starts.
+- Thread identity is the T3 **app-thread id**. Switching a thread's provider or
+  model mid-thread keeps that id, its history and its attention state; only
+  `provider`/`model` change. Provider session and provider-thread ids are
+  accepted as lookup aliases and are never reported as new threads.
+  `wait_for_change` reports a provider switch on the same thread (including
+  T3 rotating to a linked provider thread) instead of treating it as new.
 - `get_thread` returns a server-bounded recent window. Pass `page.beforeCursor`
   back as `beforeCursor` to fetch older history; `page.hasMore` signals more
   pages. `turnLimit` remains an accepted legacy hint, but v2 does not enforce it

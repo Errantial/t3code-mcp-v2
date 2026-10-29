@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { discoverOrigin, loadToken, ConfigError } from "./config.js";
 import type { ShellSnapshot, ThreadDetailSnapshot } from "./model.js";
+import { canonicalThreadId, isProviderScopedThreadId } from "./model.js";
 import { T3Rpc } from "./rpc.js";
 import {
   boundedSchema,
@@ -126,6 +127,14 @@ export class T3Client {
       await this.rpc.call("orchestration.getThreadProjection", { threadId }),
     );
   }
+  /** Resolve provider-scoped ids to the canonical T3 app-thread id. */
+  async resolveThreadId(
+    threadId: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const shell = await this.shell(false, signal);
+    return canonicalThreadId(shell.threads, threadId);
+  }
   async thread(
     threadId: string,
     opts: {
@@ -134,16 +143,25 @@ export class T3Client {
       signal?: AbortSignal;
     } = {},
   ): Promise<ThreadDetailSnapshot> {
-    const path = `/api/orchestration/threads/${encodeURIComponent(threadId)}`;
+    // Read the shell first so provider session/thread ids passed by an older
+    // caller can be resolved to the canonical app-thread id before any request.
+    const shell = await this.shell(false, opts.signal);
+    const resolvedId = canonicalThreadId(shell.threads, threadId);
+    const path = `/api/orchestration/threads/${encodeURIComponent(resolvedId)}`;
     const raw = boundedSchema.parse(
       await this.req(`${path}/bounded`, { signal: opts.signal }),
     );
     // Shell state carries authoritative attention summaries not present on appThread.
-    const shell = await this.shell(false, opts.signal);
     const thread = normalizeProjection(
       raw.projection,
-      shell.threads.find((t) => t.id === threadId),
+      shell.threads.find((t) => t.id === resolvedId),
     );
+    // Identity is the T3 app thread, even if a provider-scoped alias was used
+    // or the projection echoed a provider thread id after a switch.
+    thread.id = resolvedId;
+    thread.session = thread.session
+      ? { ...thread.session, threadId: resolvedId }
+      : { threadId: resolvedId, status: "idle" };
     let cursor = raw.historyCursor;
     let hasMore = raw.hasMoreHistory;
     let sequence = raw.snapshotSequence;
@@ -194,7 +212,16 @@ export class T3Client {
       .parse(await this.rpc.call("orchestration.dispatchCommand", command));
   }
   async dispatch(old: Record<string, unknown>): Promise<DispatchResult> {
-    const { createdAt: _createdAt, ...command } = old;
+    const { createdAt: _createdAt, ...input } = old;
+    let command = input;
+    if (
+      typeof command.threadId === "string" &&
+      isProviderScopedThreadId(command.threadId)
+    ) {
+      const resolved = await this.resolveThreadId(command.threadId);
+      if (resolved !== command.threadId)
+        command = { ...command, threadId: resolved };
+    }
     if (command.type === "thread.meta.update")
       command.type = "thread.metadata.update";
     if (command.type === "thread.turn.start") {

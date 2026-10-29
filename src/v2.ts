@@ -50,6 +50,18 @@ export const threadSchema = base.extend({
   archivedAt: z.string().nullable(),
   runtimeMode: z.string(),
   interactionMode: z.string(),
+  providerInstanceId: z.string().optional(),
+  providerInstanceHistory: z.array(z.string()).optional(),
+  activeProviderThreadId: z.string().nullable().optional(),
+  lineage: z
+    .object({
+      parentThreadId: z.string().nullable(),
+      relationshipToParent: z.string().nullable(),
+      rootThreadId: z.string(),
+    })
+    .passthrough()
+    .nullable()
+    .optional(),
   modelSelection: z
     .object({
       instanceId: z.string(),
@@ -70,6 +82,13 @@ export const threadSchema = base.extend({
     })
     .passthrough(),
 });
+export const providerThreadSchema = base.extend({
+  providerInstanceId: z.string().optional(),
+  providerSessionId: z.string().nullable().optional(),
+  appThreadId: z.string().nullable().optional(),
+  status: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
 export const shellSchema = z.object({
   schemaVersion: z.literal(2),
   snapshotSequence: z.number(),
@@ -84,6 +103,7 @@ export const projectionSchema = z
     thread: threadSchema,
     runs: z.array(runSchema),
     providerSessions: z.array(base),
+    providerThreads: z.array(providerThreadSchema).default([]),
     nodes: z.array(base).default([]),
     runtimeRequests: z.array(requestSchema),
     messages: z.array(base),
@@ -118,15 +138,33 @@ const state = (
         ? "completed"
         : "running";
 
+const ACTIVE_RUN_STATUSES: readonly string[] = [
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+];
+
+/** T3 serializes some absent provider ids as the literal string "null". */
+function optionalId(value: unknown): string | null {
+  return typeof value === "string" && value && value !== "null" ? value : null;
+}
+
 export function normalizeShell(raw: z.infer<typeof threadSchema>): ThreadShell {
   const status = String(raw.activityRunStatus ?? raw.status ?? "idle");
   const pending = raw.pendingRuntimeRequest as
     { id: string; kind: string } | null | undefined;
   const latestId = raw.latestRunId as string | null | undefined;
+  const providerInstanceId = (raw.providerInstanceId ??
+    raw.modelSelection?.instanceId) as string | undefined;
+  const activeProviderThreadId = optionalId(raw.activeProviderThreadId);
   return {
     ...raw,
     branch: raw.branch as string | null,
     worktreePath: raw.worktreePath as string | null,
+    providerInstanceId,
+    activeProviderThreadId,
     latestTurn: latestId
       ? {
           turnId: latestId,
@@ -145,7 +183,9 @@ export function normalizeShell(raw: z.infer<typeof threadSchema>): ThreadShell {
           : status === "failed"
             ? "error"
             : "idle",
-      providerInstanceId: raw.providerInstanceId as string,
+      providerInstanceId,
+      providerName: providerInstanceId,
+      providerThreadId: activeProviderThreadId,
       activeTurnId: raw.activeRunId as string | null,
       lastError: raw.lastError,
     },
@@ -249,14 +289,66 @@ export function normalizeProjection(
     .sort((a, b) => a.position - b.position)
     .map((v) => v.item);
   const content = normalizeItems(items);
-  const providerSession = p.providerSessions
-    .slice()
-    .sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)))
-    .at(-1);
+  // Provider threads/sessions are provider-scoped plumbing. They may be shared
+  // across app threads and are never thread identity. Bind the current provider
+  // thread to this app thread so a switch cannot leak another thread's status.
+  const providerInstanceId = (p.thread.providerInstanceId ??
+    p.thread.modelSelection.instanceId) as string;
+  const activeProviderThreadId = optionalId(p.thread.activeProviderThreadId);
+  const providerThreads = p.providerThreads ?? [];
+  const boundProviderThread =
+    providerThreads.find((pt) => pt.id === activeProviderThreadId) ??
+    providerThreads.find((pt) => pt.appThreadId === p.thread.id);
+  const providerSessionId =
+    optionalId(boundProviderThread?.providerSessionId) ??
+    optionalId(
+      p.providerSessions
+        .filter(
+          (s) =>
+            !s.providerInstanceId ||
+            s.providerInstanceId === providerInstanceId,
+        )
+        .slice()
+        .sort((a, b) =>
+          String(a.updatedAt).localeCompare(String(b.updatedAt)),
+        )
+        .at(-1)?.id,
+    );
+  const providerSession =
+    p.providerSessions.find((s) => s.id === providerSessionId) ??
+    p.providerSessions
+      .filter(
+        (s) =>
+          !s.providerInstanceId ||
+          s.providerInstanceId === providerInstanceId,
+      )
+      .slice()
+      .sort((a, b) =>
+        String(a.updatedAt).localeCompare(String(b.updatedAt)),
+      )
+      .at(-1);
+  const latestIsTerminal =
+    !!latest && !ACTIVE_RUN_STATUSES.includes(latest.status);
+  const sessionStatus = active
+    ? ["preparing", "starting"].includes(active.status)
+      ? "starting"
+      : "running"
+    : latest?.status === "failed"
+      ? "error"
+      : // The shell entry is per app thread; a provider session's status is
+        // per provider instance and may describe a different thread entirely.
+        (shell?.session?.status ??
+        (latestIsTerminal
+          ? "idle"
+          : providerSession
+            ? String(providerSession.status)
+            : "idle"));
   return {
     ...normalizeShell(p.thread),
     ...shell,
     ...p.thread,
+    // Identity is the T3 app thread, never a provider thread/session echo.
+    id: shell?.id ?? p.thread.id,
     branch: p.thread.branch as string | null,
     worktreePath: p.thread.worktreePath as string | null,
     ...content,
@@ -272,22 +364,16 @@ export function normalizeProjection(
         }
       : null,
     session: {
-      threadId: p.thread.id,
-      status: active
-        ? ["preparing", "starting"].includes(active.status)
-          ? "starting"
-          : "running"
-        : latest?.status === "failed"
-          ? "error"
-          : providerSession
-            ? (String(
-                providerSession.status,
-              ) as import("./model.js").Session["status"])
-            : "idle",
+      threadId: shell?.id ?? p.thread.id,
+      status: sessionStatus as import("./model.js").Session["status"],
       activeTurnId: active?.id ?? null,
-      providerInstanceId: p.thread.modelSelection.instanceId,
-      providerName: p.thread.modelSelection.instanceId,
-      lastError: shell?.session?.lastError ?? providerSession?.lastError,
+      providerInstanceId,
+      providerName: providerInstanceId,
+      providerThreadId: activeProviderThreadId ?? boundProviderThread?.id ?? null,
+      providerSessionId,
+      lastError:
+        shell?.session?.lastError ??
+        (latest?.status === "failed" ? providerSession?.lastError : undefined),
     },
     hasPendingApprovals: pending.some((r) => r.kind === "approval"),
     hasPendingUserInput: pending.some((r) => r.kind === "user-input"),

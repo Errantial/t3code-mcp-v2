@@ -6,7 +6,7 @@ import {
   requestsFromProjection,
   shellSchema,
 } from "../dist/v2.js";
-import { attentionOf } from "../dist/model.js";
+import { attentionOf, canonicalThreadId } from "../dist/model.js";
 import { T3Client } from "../dist/client.js";
 import { T3Rpc } from "../dist/rpc.js";
 import { registerPhase1 } from "../dist/tools/phase1.js";
@@ -243,6 +243,28 @@ test("mutations use v2 commands and reject stale/wrong/non-resumable requests", 
   assert.equal(commands.at(-1).type, "thread.metadata.update");
   assert.equal("createdAt" in commands.at(-1), false);
 });
+test("mutations resolve provider-scoped ids to the T3 app thread id", async () => {
+  const client = new T3Client("http://unused", "unused");
+  const commands = [];
+  client.resolveThreadId = async (id) =>
+    id === "provider-thread:pt-1" ? "t" : id;
+  client.command = async (command) => {
+    commands.push(command);
+    return { sequence: 1 };
+  };
+  await client.dispatch({
+    type: "thread.archive",
+    commandId: "c",
+    threadId: "provider-thread:pt-1",
+  });
+  assert.equal(commands[0].threadId, "t");
+  await client.dispatch({
+    type: "thread.archive",
+    commandId: "c2",
+    threadId: "already-canonical",
+  });
+  assert.equal(commands[1].threadId, "already-canonical");
+});
 test("message dispatch preserves modes and queues without escalating permission", async () => {
   const client = new T3Client("http://unused", "unused");
   const commands = [];
@@ -329,6 +351,329 @@ test("wait returns pending request for its target run", async () => {
     "needs-you",
   );
 });
+test("provider switch keeps the T3 thread id, history, and attention while updating provider/model", () => {
+  const switchedThread = {
+    ...thread,
+    providerInstanceId: "opencode",
+    providerInstanceHistory: ["codex", "opencode"],
+    activeProviderThreadId: "provider-thread:pt-2",
+    modelSelection: {
+      instanceId: "opencode",
+      model: "opencode-go/deepseek-v4.1-flash",
+      options: [{ id: "variant", value: "max" }],
+    },
+  };
+  const before = projection({
+    runs: [run("r1", "completed", 1)],
+    visibleTurnItems: [
+      visible(
+        item("u1", "user_message", "r1", {
+          messageId: "u1",
+          text: "before switch",
+        }),
+        0,
+      ),
+      visible(
+        item("a1", "assistant_message", "r1", {
+          messageId: "a1",
+          text: "codex reply",
+        }),
+        1,
+      ),
+    ],
+    providerSessions: [
+      {
+        id: "session:codex",
+        providerInstanceId: "codex",
+        status: "stopped",
+        updatedAt: "2026-10-29T11:00:00.000Z",
+      },
+    ],
+    providerThreads: [
+      {
+        id: "provider-thread:pt-1",
+        providerInstanceId: "codex",
+        providerSessionId: "session:codex",
+        appThreadId: "t",
+        status: "closed",
+        updatedAt: "2026-10-29T11:00:00.000Z",
+      },
+    ],
+  });
+  const beforeShell = normalizeShell({
+    ...thread,
+    status: "completed",
+    latestRunId: "r1",
+    latestRunCompletedAt: now,
+  });
+  const after = projection({
+    thread: switchedThread,
+    runs: [run("r2", "completed", 2), run("r1", "completed", 1)],
+    visibleTurnItems: [
+      visible(
+        item("u1", "user_message", "r1", {
+          messageId: "u1",
+          text: "before switch",
+        }),
+        0,
+      ),
+      visible(
+        item("a1", "assistant_message", "r1", {
+          messageId: "a1",
+          text: "codex reply",
+        }),
+        1,
+      ),
+      visible(
+        item("u2", "user_message", "r2", {
+          messageId: "u2",
+          text: "after switch",
+        }),
+        2,
+      ),
+      visible(
+        item("a2", "assistant_message", "r2", {
+          messageId: "a2",
+          text: "opencode reply",
+        }),
+        3,
+      ),
+    ],
+    providerSessions: [
+      {
+        id: "session:codex",
+        providerInstanceId: "codex",
+        status: "stopped",
+        updatedAt: "2026-10-29T11:00:00.000Z",
+      },
+      {
+        // Shared provider session: its status is provider-wide, not thread-wide.
+        id: "session:opencode",
+        providerInstanceId: "opencode",
+        status: "running",
+        updatedAt: "2026-10-29T12:05:00.000Z",
+      },
+    ],
+    providerThreads: [
+      {
+        id: "provider-thread:pt-2",
+        providerInstanceId: "opencode",
+        providerSessionId: "session:opencode",
+        appThreadId: "t",
+        status: "idle",
+        updatedAt: "2026-10-29T12:00:00.000Z",
+      },
+    ],
+  });
+  const afterShell = normalizeShell({
+    ...switchedThread,
+    status: "completed",
+    latestRunId: "r2",
+    latestRunCompletedAt: now,
+  });
+
+  const oldDetail = normalizeProjection(before, beforeShell);
+  const newDetail = normalizeProjection(after, afterShell);
+  assert.equal(newDetail.id, oldDetail.id);
+  assert.equal(newDetail.id, "t");
+  assert.equal(newDetail.session.threadId, "t");
+  assert.equal(newDetail.session.providerInstanceId, "opencode");
+  assert.equal(newDetail.session.providerName, "opencode");
+  assert.equal(newDetail.session.providerThreadId, "provider-thread:pt-2");
+  assert.equal(newDetail.session.providerSessionId, "session:opencode");
+  assert.equal(newDetail.modelSelection.instanceId, "opencode");
+  assert.equal(newDetail.modelSelection.model, "opencode-go/deepseek-v4.1-flash");
+  assert.equal(newDetail.messages.length, 4);
+  assert.deepEqual(
+    newDetail.messages.map((m) => m.text),
+    ["before switch", "codex reply", "after switch", "opencode reply"],
+  );
+  assert.equal(attentionOf(oldDetail), "done");
+  assert.equal(attentionOf(newDetail), "done");
+  // A shared provider session saying "running" must not turn this thread into
+  // a working/new thread after the switch.
+  assert.equal(newDetail.session.status, "idle");
+  assert.equal(newDetail.latestTurn.turnId, "r2");
+  assert.deepEqual(afterShell.providerInstanceHistory, ["codex", "opencode"]);
+});
+
+test("list_threads keeps one row for a switched thread and updates provider/model", async () => {
+  const switched = normalizeShell({
+    ...thread,
+    providerInstanceId: "opencode",
+    providerInstanceHistory: ["codex", "opencode"],
+    activeProviderThreadId: "provider-thread:pt-2",
+    modelSelection: {
+      instanceId: "opencode",
+      model: "opencode-go/deepseek-v4.1-flash",
+    },
+    status: "completed",
+    latestRunId: "r",
+    latestRunCompletedAt: now,
+  });
+  const handlers = tools({
+    shell: async () => ({
+      snapshotSequence: 1,
+      projects: [{ id: "p", title: "p", workspaceRoot: "/tmp" }],
+      threads: [switched],
+      updatedAt: now,
+    }),
+  });
+  const result = value(await handlers.get("list_threads")({ limit: 10 }));
+  assert.equal(result.shown, 1);
+  assert.equal(result.threads.length, 1);
+  assert.equal(result.threads[0].threadId, "t");
+  assert.equal(result.threads[0].rootThreadId, "t");
+  assert.equal(result.threads[0].provider, "opencode");
+  assert.equal(
+    result.threads[0].model,
+    "opencode/opencode-go/deepseek-v4.1-flash",
+  );
+});
+
+test("provider session/thread ids resolve to the canonical T3 thread id", async () => {
+  const threads = [
+    normalizeShell({
+      ...thread,
+      status: "completed",
+      latestRunId: "r",
+      activeProviderThreadId: "provider-thread:pt-1",
+    }),
+  ];
+  assert.equal(canonicalThreadId(threads, "t"), "t");
+  assert.equal(canonicalThreadId(threads, "provider-thread:pt-1"), "t");
+  assert.equal(
+    canonicalThreadId(threads, "provider-thread:unrelated"),
+    "provider-thread:unrelated",
+  );
+
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes("/bounded"))
+      return Response.json({
+        snapshotSequence: 1,
+        projection: projection(),
+        historyCursor: null,
+        hasMoreHistory: false,
+      });
+    return Response.json({
+      schemaVersion: 2,
+      snapshotSequence: 1,
+      projects: [{ id: "p", title: "p", workspaceRoot: "/tmp" }],
+      threads: [
+        {
+          ...thread,
+          status: "completed",
+          latestRunId: "r",
+          activeProviderThreadId: "provider-thread:pt-1",
+        },
+      ],
+      archivedThreads: [],
+    });
+  };
+  try {
+    const client = new T3Client("http://unused", "private-token");
+    const snap = await client.thread("provider-thread:pt-1");
+    assert.equal(snap.thread.id, "t");
+    assert.equal(snap.thread.session.threadId, "t");
+    assert.ok(calls.some((url) => url.includes("/threads/t/bounded")));
+    assert.equal(
+      calls.some((url) => url.includes("provider-thread")),
+      false,
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("wait_for_change reports a provider switch as the same thread, not a new thread", async () => {
+  const baseline = normalizeShell({
+    ...thread,
+    status: "completed",
+    latestRunId: "r",
+    latestRunCompletedAt: now,
+  });
+  const switched = normalizeShell({
+    ...thread,
+    providerInstanceId: "opencode",
+    providerInstanceHistory: ["codex", "opencode"],
+    activeProviderThreadId: "provider-thread:pt-2",
+    modelSelection: {
+      instanceId: "opencode",
+      model: "opencode-go/deepseek-v4.1-flash",
+    },
+    status: "completed",
+    latestRunId: "r",
+    latestRunCompletedAt: now,
+  });
+  let calls = 0;
+  const handlers = tools({
+    shell: async () => {
+      calls++;
+      return {
+        snapshotSequence: calls,
+        projects: [{ id: "p", title: "p", workspaceRoot: "/tmp" }],
+        threads: [calls === 1 ? baseline : switched],
+        updatedAt: now,
+      };
+    },
+  });
+  const result = value(
+    await handlers.get("wait_for_change")({ timeoutSeconds: 5 }, extra()),
+  );
+  assert.equal(result.changed, 1);
+  assert.equal(result.changes[0].threadId, "t");
+  assert.equal(result.changes[0].changeType, "updated");
+  assert.match(result.changes[0].change, /provider codex → opencode/);
+  assert.doesNotMatch(result.changes[0].change, /new thread/);
+});
+
+test("wait_for_change keeps the original id when T3 rotates to a linked provider thread", async () => {
+  const baseline = normalizeShell({
+    ...thread,
+    status: "completed",
+    latestRunId: "r",
+    latestRunCompletedAt: now,
+    activeProviderThreadId: "provider-thread:pt-1",
+  });
+  const continuedOnNewId = normalizeShell({
+    ...thread,
+    id: "t2",
+    providerInstanceId: "opencode",
+    providerInstanceHistory: ["codex", "opencode"],
+    activeProviderThreadId: "provider-thread:pt-1",
+    modelSelection: {
+      instanceId: "opencode",
+      model: "opencode-go/deepseek-v4.1-flash",
+    },
+    status: "completed",
+    latestRunId: "r2",
+    latestRunCompletedAt: now,
+  });
+  let calls = 0;
+  const handlers = tools({
+    shell: async () => {
+      calls++;
+      return {
+        snapshotSequence: calls,
+        projects: [{ id: "p", title: "p", workspaceRoot: "/tmp" }],
+        threads: [calls === 1 ? baseline : continuedOnNewId],
+        updatedAt: now,
+      };
+    },
+  });
+  const result = value(
+    await handlers.get("wait_for_change")({ timeoutSeconds: 5 }, extra()),
+  );
+  assert.equal(result.changed, 1);
+  assert.equal(result.changes[0].threadId, "t");
+  assert.equal(result.changes[0].changeType, "provider-switch");
+  assert.match(result.changes[0].change, /provider codex → opencode/);
+  assert.doesNotMatch(result.changes[0].change, /new thread/);
+});
+
 test("poll sleeps cancel promptly", async () => {
   const c = new AbortController();
   const pending = sleep(30000, c.signal);

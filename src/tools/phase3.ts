@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { T3Client } from "../client.js";
-import { attentionOf, threadRequests } from "../model.js";
+import { attentionOf, providerOf, threadRequests } from "../model.js";
 import type { Attention, ThreadShell } from "../model.js";
 import {
   errorResult,
@@ -283,18 +283,36 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
       try {
         const client = getClient();
         const baseline = await client.shell(false, extra.signal);
+        const provider = (t: ThreadShell) => providerOf(t);
+        const model = (t: ThreadShell) => t.modelSelection?.model ?? null;
         const fingerprint = (t: ThreadShell) =>
           JSON.stringify([
             attentionOf(t),
             t.pendingRequestIds ?? [],
             t.archivedAt ?? null,
+            provider(t),
+            model(t),
           ]);
+        const aliases = (t: ThreadShell) =>
+          [t.activeProviderThreadId, t.session?.providerThreadId].filter(
+            (id): id is string => !!id,
+          );
         const before = new Map(
           baseline.threads.map((t) => [
             t.id,
-            { state: attentionOf(t), fingerprint: fingerprint(t) },
+            {
+              state: attentionOf(t),
+              fingerprint: fingerprint(t),
+              provider: provider(t),
+              model: model(t),
+            },
           ]),
         );
+        // Provider session/thread ids are aliases of the app thread, not new
+        // threads. Remember which canonical thread owns each alias.
+        const aliasOwner = new Map<string, string>();
+        for (const t of baseline.threads)
+          for (const alias of aliases(t)) aliasOwner.set(alias, t.id);
         const deadline = Date.now() + (args.timeoutSeconds ?? 60) * 1000;
         for (;;) {
           const remaining = deadline - Date.now();
@@ -306,20 +324,51 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
           await sleep(Math.min(2500, remaining), extra.signal);
           const shell = await client.shell(false, extra.signal);
           const projectsById = new Map(shell.projects.map((p) => [p.id, p]));
-          const changes = shell.threads
-            .filter((t) => before.get(t.id)?.fingerprint !== fingerprint(t))
-            .map((t) => ({
+          const changes: Array<Record<string, unknown>> = [];
+          const seen = new Set<string>();
+          for (const t of shell.threads) {
+            const directOwner = before.has(t.id) ? t.id : undefined;
+            const aliasOwnerId = aliases(t)
+              .map((alias) => aliasOwner.get(alias))
+              .find((id): id is string => !!id);
+            const owner = directOwner ?? aliasOwnerId;
+            if (!owner) {
+              changes.push({
+                ...threadRow(t, projectsById),
+                change: `new thread (${attentionOf(t)})`,
+                changeType: "new",
+              });
+              continue;
+            }
+            if (seen.has(owner)) continue;
+            seen.add(owner);
+            const previous = before.get(owner)!;
+            if (previous.fingerprint === fingerprint(t)) continue;
+            const parts: string[] = [];
+            if (previous.state !== attentionOf(t))
+              parts.push(`${previous.state} → ${attentionOf(t)}`);
+            if (previous.provider !== provider(t))
+              parts.push(
+                `provider ${previous.provider ?? "none"} → ${provider(t) ?? "none"}`,
+              );
+            if (previous.model !== model(t))
+              parts.push(
+                `model ${previous.model ?? "none"} → ${model(t) ?? "none"}`,
+              );
+            changes.push({
               ...threadRow(t, projectsById),
-              change: before.has(t.id)
-                ? `${before.get(t.id)!.state} → ${attentionOf(t)}`
-                : `new thread (${attentionOf(t)})`,
-            }));
+              threadId: owner,
+              change: parts.join(", ") || "updated",
+              changeType: owner === t.id ? "updated" : "provider-switch",
+            });
+          }
           for (const [id, previous] of before)
-            if (!shell.threads.some((t) => t.id === id))
+            if (!seen.has(id))
               changes.push({
                 threadId: id,
                 change: `removed from active snapshot (${previous.state})`,
-              } as (typeof changes)[number]);
+                changeType: "removed",
+              });
           if (changes.length)
             return jsonResult({ changed: changes.length, changes });
         }

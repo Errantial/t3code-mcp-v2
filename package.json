@@ -13,7 +13,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "smoke": "node scripts/smoke.mjs",
-    "test": "pnpm build && node --test tests/*.test.mjs",
+    "test": "tsc && node --test tests/*.test.mjs",
     "integration": "node scripts/integration.mjs"
   },
   "engines": {

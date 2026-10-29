@@ -254,6 +254,9 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
           session: {
             status: t.session?.status ?? "none",
             provider: t.session?.providerName ?? null,
+            providerInstanceId: t.session?.providerInstanceId ?? null,
+            providerThreadId: t.session?.providerThreadId ?? null,
+            providerSessionId: t.session?.providerSessionId ?? null,
             lastError: t.session?.lastError ?? null,
           },
           latestTurn: t.latestTurn

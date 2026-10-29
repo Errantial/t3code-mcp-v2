@@ -20,16 +20,19 @@ export function relTime(iso: string | null | undefined, now = Date.now()): strin
   return `${Math.round(h / 24)}d ago`;
 }
 
-/** Compact list row for a thread. */
+/** Compact list row for a thread. Identity is always the T3 app-thread id. */
 export function threadRow(t: ThreadShell, projectsById: Map<string, Project>) {
   const model = t.modelSelection ? `${t.modelSelection.instanceId}/${t.modelSelection.model}` : null;
+  const provider = t.modelSelection?.instanceId ?? t.session?.providerInstanceId ?? null;
   return {
     threadId: t.id,
+    rootThreadId: t.lineage?.rootThreadId ?? t.id,
     title: t.title ?? "(untitled)",
     project: projectsById.get(t.projectId)?.title ?? t.projectId,
     attention: attentionOf(t),
     sessionStatus: t.session?.status ?? "none",
     latestTurn: t.latestTurn?.state ?? null,
+    provider,
     model,
     branch: t.branch ?? null,
     worktree: t.worktreePath ? true : false,
