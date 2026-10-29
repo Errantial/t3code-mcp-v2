@@ -10,6 +10,12 @@ import {
   relTime,
   truncate,
 } from "../format.js";
+import {
+  DEFAULT_SINCE_HOURS,
+  filterThreads,
+  pageFields,
+  paginate,
+} from "../query.js";
 
 import { sleep } from "../wait.js";
 
@@ -29,52 +35,79 @@ export function registerPhase2(server: McpServer, getClient: () => T3Client) {
     {
       title: "What needs me?",
       description:
-        "Cross-thread inbox: every thread currently blocked on the human — pending command/file " +
-        "approvals (with the exact request detail), unanswered agent questions, actionable " +
-        "proposed plans, and errored sessions. Includes the requestIds needed by " +
-        "respond_to_approval / respond_to_user_input.",
-      inputSchema: {},
+        "Cross-thread inbox: every active/recent thread currently blocked on the human — pending " +
+        "command/file approvals (with the exact request detail), unanswered agent questions, " +
+        "actionable proposed plans, and errored sessions. Old done/idle/error threads are excluded " +
+        "by default; pass includeInactive to include them. Includes the requestIds needed by " +
+        "respond_to_approval / respond_to_user_input. Use nextCursor to page.",
+      inputSchema: {
+        includeInactive: z
+          .boolean()
+          .optional()
+          .describe("Include old errored/blocked threads (default false)"),
+        sinceHours: z
+          .number()
+          .min(1)
+          .max(720)
+          .optional()
+          .describe(
+            `Recency window for old error threads (default ${DEFAULT_SINCE_HOURS}h)`,
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .describe("Max rows (default 15)"),
+        cursor: z
+          .string()
+          .optional()
+          .describe("Opaque nextCursor from a previous pending_actions call"),
+      },
     },
-    async () => {
+    async (args) => {
       try {
         const client = getClient();
         const shell = await client.shell();
         const projectsById = new Map(shell.projects.map((p) => [p.id, p]));
-        const allBlocked = shell.threads.filter(
-          (t) => !t.archivedAt && needsHuman(t),
-        );
-        const blocked = allBlocked
-          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-          .slice(0, 15);
-        const items = [];
-        for (const t of blocked) {
-          const attention = attentionOf(t);
-          const item: Record<string, unknown> = {
-            threadId: t.id,
-            title: t.title ?? "(untitled)",
-            project: projectsById.get(t.projectId)?.title ?? t.projectId,
-            attention,
-            updated: relTime(t.updatedAt),
-          };
-          if (attention === "needs-approval" || attention === "needs-input") {
-            try {
-              const detail = await client.thread(t.id, { turnLimit: 3 });
-              item.requests = threadRequests(detail.thread);
-            } catch {
-              item.requests = "unavailable";
+        const blocked = filterThreads(shell.threads, {
+          includeInactive: args.includeInactive,
+          sinceHours: args.sinceHours,
+        })
+          .filter(needsHuman)
+          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+        const page = paginate(blocked, args.limit ?? 15, args.cursor);
+        const items = await Promise.all(
+          page.items.map(async (t) => {
+            const attention = attentionOf(t);
+            const item: Record<string, unknown> = {
+              threadId: t.id,
+              title: t.title ?? "(untitled)",
+              project: projectsById.get(t.projectId)?.title ?? t.projectId,
+              attention,
+              updated: relTime(t.updatedAt),
+            };
+            if (attention === "needs-approval" || attention === "needs-input") {
+              try {
+                const detail = await client.detail(t.id);
+                item.requests = threadRequests(detail);
+              } catch {
+                item.requests = "unavailable";
+              }
             }
-          }
-          if (attention === "error") {
-            item.lastError =
-              t.session?.lastError ?? t.latestTurn?.state ?? null;
-          }
-          items.push(item);
-        }
+            if (attention === "error") {
+              item.lastError =
+                t.session?.lastError ?? t.latestTurn?.state ?? null;
+            }
+            return item;
+          }),
+        );
         return jsonResult({
-          needsAttention: allBlocked.length,
-          shown: items.length,
+          needsAttention: page.total,
+          ...pageFields(page),
           items,
-          ...(items.length === 0 ? { note: "Nothing is waiting on you." } : {}),
+          ...(page.total === 0 ? { note: "Nothing is waiting on you." } : {}),
         });
       } catch (e) {
         return errorResult(e);
@@ -349,9 +382,7 @@ export function registerPhase2(server: McpServer, getClient: () => T3Client) {
         let targetRunId = args.runId;
         for (;;) {
           if (extra.signal.aborted) throw new Error("MCP request cancelled");
-          const { thread: t } = await client.thread(args.threadId, {
-            signal: extra.signal,
-          });
+          const t = await client.detail(args.threadId);
           targetRunId ??= t.runs?.[0]?.id;
           if (!targetRunId)
             return jsonResult({

@@ -1,14 +1,14 @@
 import { z } from "zod";
 import { discoverOrigin, loadToken, ConfigError } from "./config.js";
 import type { ShellSnapshot, ThreadDetailSnapshot } from "./model.js";
-import { canonicalThreadId, isProviderScopedThreadId } from "./model.js";
+import { isProviderScopedThreadId } from "./model.js";
 import { T3Rpc } from "./rpc.js";
+import { ThreadIndex, type ShellStreamItem } from "./shell-cache.js";
 import {
   boundedSchema,
   historySchema,
   normalizeItems,
   normalizeProjection,
-  normalizeShell,
   projectionSchema,
   shellSchema,
 } from "./v2.js";
@@ -28,6 +28,7 @@ export interface DispatchResult {
 
 export class T3Client {
   readonly rpc: T3Rpc;
+  readonly index: ThreadIndex;
   constructor(
     readonly origin: string,
     private readonly token: string,
@@ -39,6 +40,22 @@ export class T3Client {
           await this.req("/api/auth/websocket-ticket", { method: "POST" }),
         );
       return result.ticket;
+    });
+    this.index = new ThreadIndex({
+      loadActive: async (signal) =>
+        shellSchema.parse(
+          await this.req("/api/orchestration/shell", { signal }),
+        ),
+      loadArchived: async () =>
+        shellSchema.parse(
+          await this.rpc.call("orchestration.getArchivedShellSnapshot", {}),
+        ),
+      subscribe: (afterSequence, onItems) =>
+        this.rpc.stream(
+          "orchestration.subscribeShell",
+          { afterSequence },
+          (values) => onItems(values as ShellStreamItem[]),
+        ),
     });
   }
   private async req(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -102,25 +119,7 @@ export class T3Client {
     includeArchived = false,
     signal?: AbortSignal,
   ): Promise<ShellSnapshot> {
-    const raw = shellSchema.parse(
-      await this.req("/api/orchestration/shell", { signal }),
-    );
-    let archived = raw.archivedThreads ?? [];
-    if (includeArchived) {
-      const archive = shellSchema.parse(
-        await this.rpc.call("orchestration.getArchivedShellSnapshot", {}),
-      );
-      archived = archive.threads;
-    }
-    const all = new Map(
-      [...raw.threads, ...archived].map((t) => [t.id, normalizeShell(t)]),
-    );
-    return {
-      snapshotSequence: raw.snapshotSequence,
-      projects: raw.projects,
-      threads: [...all.values()],
-      updatedAt: new Date().toISOString(),
-    };
+    return this.index.snapshot(includeArchived, signal);
   }
   async projection(threadId: string) {
     return projectionSchema.parse(
@@ -132,8 +131,7 @@ export class T3Client {
     threadId: string,
     signal?: AbortSignal,
   ): Promise<string> {
-    const shell = await this.shell(false, signal);
-    return canonicalThreadId(shell.threads, threadId);
+    return this.index.resolveId(threadId, signal);
   }
   async thread(
     threadId: string,
@@ -143,19 +141,18 @@ export class T3Client {
       signal?: AbortSignal;
     } = {},
   ): Promise<ThreadDetailSnapshot> {
-    // Read the shell first so provider session/thread ids passed by an older
-    // caller can be resolved to the canonical app-thread id before any request.
-    const shell = await this.shell(false, opts.signal);
-    const resolvedId = canonicalThreadId(shell.threads, threadId);
+    // Single-thread reads go straight to the projection. Only a provider-scoped
+    // alias needs the shell index to find its canonical app-thread id.
+    const resolvedId = isProviderScopedThreadId(threadId)
+      ? await this.resolveThreadId(threadId, opts.signal)
+      : threadId;
     const path = `/api/orchestration/threads/${encodeURIComponent(resolvedId)}`;
     const raw = boundedSchema.parse(
-      await this.req(`${path}/bounded`, { signal: opts.signal }),
+      await this.req(`${path}/bounded?compactTurnItems=1`, {
+        signal: opts.signal,
+      }),
     );
-    // Shell state carries authoritative attention summaries not present on appThread.
-    const thread = normalizeProjection(
-      raw.projection,
-      shell.threads.find((t) => t.id === resolvedId),
-    );
+    const thread = normalizeProjection(raw.projection);
     // Identity is the T3 app thread, even if a provider-scoped alias was used
     // or the projection echoed a provider thread id after a switch.
     thread.id = resolvedId;
@@ -206,10 +203,28 @@ export class T3Client {
         (m) => m.role === "assistant" && m.turnId === runId && !m.streaming,
       );
   }
+  /**
+   * Recent thread detail from the projection RPC. This is the fast path for
+   * single-thread reads: T3 returns a bounded visible window (~hundreds of KB)
+   * without the shell snapshot or the HTTP bounded-history envelope.
+   */
+  async detail(threadId: string): Promise<import("./model.js").ThreadDetail> {
+    const resolvedId = isProviderScopedThreadId(threadId)
+      ? await this.resolveThreadId(threadId)
+      : threadId;
+    const thread = normalizeProjection(await this.projection(resolvedId));
+    thread.id = resolvedId;
+    thread.session = thread.session
+      ? { ...thread.session, threadId: resolvedId }
+      : { threadId: resolvedId, status: "idle" };
+    return thread;
+  }
   async command(command: Record<string, unknown>): Promise<DispatchResult> {
-    return z
+    const result = z
       .object({ sequence: z.number() })
       .parse(await this.rpc.call("orchestration.dispatchCommand", command));
+    this.index.invalidate();
+    return result;
   }
   async dispatch(old: Record<string, unknown>): Promise<DispatchResult> {
     const { createdAt: _createdAt, ...input } = old;
@@ -225,8 +240,7 @@ export class T3Client {
     if (command.type === "thread.meta.update")
       command.type = "thread.metadata.update";
     if (command.type === "thread.turn.start") {
-      const detail = await this.thread(String(command.threadId));
-      const t = detail.thread;
+      const t = await this.detail(String(command.threadId));
       for (const [field, type] of [
         ["runtimeMode", "thread.runtime-mode.set"],
         ["interactionMode", "thread.interaction-mode.set"],
@@ -264,7 +278,7 @@ export class T3Client {
       };
     }
     if (command.type === "thread.turn.interrupt") {
-      const t = (await this.thread(String(command.threadId))).thread;
+      const t = await this.detail(String(command.threadId));
       const runId = command.runId ?? t.session?.activeTurnId;
       if (!runId) throw new T3Error("No active run to interrupt");
       return this.command({

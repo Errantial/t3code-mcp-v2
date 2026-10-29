@@ -2,7 +2,7 @@
 
 ## Task and authoritative source
 
-Install this **t3code-mcp 0.2.0 v2 port** on the destination machine and verify it
+Install this **t3code-mcp 0.3.0 v2 port** on the destination machine and verify it
 against that machine's running T3 Code instance. Preserve any existing services.
 Report the actual working endpoint, transport, credential-file location and
 verification results when finished.
@@ -13,8 +13,8 @@ source of this v2 package. Do not substitute an upstream clone for this port.
 
 Direct package downloads (no GitHub login required for the public repository):
 
-- Archive: https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.2.0.tar.gz
-- Checksum: https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.2.0.tar.gz.sha256
+- Archive: https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.3.0.tar.gz
+- Checksum: https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.3.0.tar.gz.sha256
 - Agent prompt: https://github.com/Errantial/t3code-mcp-v2/blob/main/AGENT_PROMPT.md
 
 The archive includes the complete source, lockfile, tests and deployment templates.
@@ -56,14 +56,14 @@ installation. The following commands assume a Unix-like shell:
 
 ```bash
 # Download the exact v2 package from the dedicated GitHub repository.
-curl --fail --location --output t3code-mcp-v2-0.2.0.tar.gz \
-  https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.2.0.tar.gz
-curl --fail --location --output t3code-mcp-v2-0.2.0.tar.gz.sha256 \
-  https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.2.0.tar.gz.sha256
-sha256sum -c t3code-mcp-v2-0.2.0.tar.gz.sha256
-# macOS alternative: shasum -a 256 -c t3code-mcp-v2-0.2.0.tar.gz.sha256
+curl --fail --location --output t3code-mcp-v2-0.3.0.tar.gz \
+  https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.3.0.tar.gz
+curl --fail --location --output t3code-mcp-v2-0.3.0.tar.gz.sha256 \
+  https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.3.0.tar.gz.sha256
+sha256sum -c t3code-mcp-v2-0.3.0.tar.gz.sha256
+# macOS alternative: shasum -a 256 -c t3code-mcp-v2-0.3.0.tar.gz.sha256
 mkdir -p "$HOME/apps"
-tar -xzf t3code-mcp-v2-0.2.0.tar.gz -C "$HOME/apps"
+tar -xzf t3code-mcp-v2-0.3.0.tar.gz -C "$HOME/apps"
 cd "$HOME/apps/t3code-mcp-v2"
 node --version
 pnpm install --frozen-lockfile
@@ -71,9 +71,10 @@ pnpm test
 ```
 
 If pnpm is unavailable, use `npx --yes pnpm@12.16.1` in place of `pnpm`.
-The `test` script itself calls `pnpm build`; if invoking via npx, run
-`npx --yes pnpm@12.16.1 build` followed by `node --test tests/*.test.mjs`
-as separate commands instead. Confirm `package.json` version is `0.2.0` and
+The `test` script runs `tsc && node --test tests/*.test.mjs`; if invoking via
+npx, run `npx --yes pnpm@12.16.1 build` followed by
+`node --test tests/*.test.mjs` as separate commands instead. Confirm
+`package.json` version is `0.3.0` and
 `src/rpc.ts` and `src/v2.ts` exist. The source must compile and all regression
 tests must pass before deployment. Do not claim v2 support just because MCP
 initialization or tool listing succeeds.

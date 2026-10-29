@@ -2,6 +2,9 @@
 
 MCP server for a running [T3 Code](https://t3.codes) instance. See which agent threads exist and what they need, read their history, send them messages, approve their permission requests — from Claude Code, Claude Desktop, or (the end goal) a voice-controlled model like Hermes while away from a screen.
 
+**Current version: 0.3.0** — protocol v2, with provider-switch identity fixes
+and a cached/incrementally-updated thread index for large workspaces.
+
 This version targets **T3 orchestration protocol v2**, tested against T3 Code
 `0.1.3-v1.1.1.20261026.22512a5.linux1`. Older protocol-v1 servers are not supported.
 
@@ -13,7 +16,7 @@ stdio or Streamable HTTP.
 
 For installation on another machine, follow [AGENT_SETUP.md](AGENT_SETUP.md).
 Fetch this v2 port from https://github.com/Errantial/t3code-mcp-v2.
-The package is in `downloads/`; start another agent with [AGENT_PROMPT.md](AGENT_PROMPT.md).
+The current 0.3.0 package is in `downloads/`; start another agent with [AGENT_PROMPT.md](AGENT_PROMPT.md).
 The original ThomasCrund repository is upstream and does not contain this port.
 
 ```bash
@@ -33,6 +36,18 @@ echo "T3_TOKEN=<the token>" > .env
 ```bash
 pnpm smoke
 ```
+
+### Updating an existing install
+
+```bash
+git pull
+pnpm install
+pnpm build
+# restart the MCP server / service that runs dist/index.js
+```
+
+The package version is in `package.json` (`0.3.0`). For a systemd/Caddy deploy,
+rebuild and restart the unit from [deploy/](deploy/) after pulling.
 
 ## Connect from Claude Code
 
@@ -67,7 +82,38 @@ claude mcp add --scope user t3code -- node /Users/thomascrundwell/Documents/proj
 - Connection failures during writes can leave the command outcome unknown.
   Commands are not retried automatically; inspect thread state before retrying.
 - Long waits support MCP cancellation. Internally, state is polled with bounded
-  delays; a persistent WebSocket is only needed for commands and archive reads.
+  delays; the persistent WebSocket also powers the shell index and commands.
+
+## Large workspaces: cache, defaults and pagination
+
+- A single-thread read (`get_thread`, `thread_digest`, `wait_for_turn`) fetches
+  that thread's projection directly. It does **not** download the 600-thread
+  shell snapshot.
+- Workspace-wide tools share an in-memory thread index. The first call loads one
+  shell snapshot; subsequent calls read the index and apply
+  `orchestration.subscribeShell` deltas (`thread.updated`, `thread.removed`,
+  project updates). Local mutations force a reconcile on the next read.
+- `list_threads`, `pending_actions`, `workspace_digest` and `search_threads`
+  default to **active or recent, non-archived** threads. Active means
+  needs-approval / needs-input / plan-ready / working; recent means updated
+  within `sinceHours` (72h for list/search/pending, 24h for workspace digest).
+- Old done/idle/error threads are opt-in with `includeInactive: true`; archived
+  threads are opt-in with `includeArchived: true` (list/search).
+- List/search/workspace/pending tools accept `limit` and return `nextCursor`;
+  pass it back as `cursor` for the next page. `search_threads` also returns the
+  total `matches`.
+
+Measured against a local 592-thread T3 instance (warm process):
+
+| Call | Before | After |
+|---|---:|---:|
+| `thread_digest` | 633–810 ms | 50 ms warm (113 ms first) |
+| `list_threads` | 392–521 ms | 2 ms warm (344 ms first) |
+| `search_threads` | 264–320 ms | 2 ms |
+| `workspace_digest` | 248–255 ms | 1–2 ms |
+
+Cold numbers are one shell/projection load; warm numbers use the index or
+projection RPC. Actual timings scale with T3's local database size.
 
 ## Tools
 

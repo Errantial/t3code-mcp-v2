@@ -11,6 +11,12 @@ import {
   relTime,
   threadRow,
 } from "../format.js";
+import {
+  DEFAULT_SINCE_HOURS,
+  filterThreads,
+  pageFields,
+  paginate,
+} from "../query.js";
 
 const ATTENTION_VALUES = [
   "needs-approval",
@@ -149,10 +155,10 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
     {
       title: "List T3 threads",
       description:
-        "List agent threads in T3 Code, most recently updated first. Filter by project, " +
-        "attention state (needs-approval, needs-input, plan-ready, working, error, done, idle), " +
-        "or include archived threads. Each row includes the thread's attention state — what, if " +
-        "anything, it needs from the human.",
+        "List agent threads in T3 Code, most recently updated first. Defaults to active or " +
+        "recent non-archived threads; archived and old done/idle/error threads are opt-in. " +
+        "Filter by project or attention state. Each row includes the thread's attention " +
+        "state — what, if anything, it needs from the human. Use nextCursor to page.",
       inputSchema: {
         projectId: z
           .string()
@@ -166,6 +172,20 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
           .boolean()
           .optional()
           .describe("Include archived threads (default false)"),
+        includeInactive: z
+          .boolean()
+          .optional()
+          .describe(
+            "Include old done/idle/error threads (default false: only active or recent)",
+          ),
+        sinceHours: z
+          .number()
+          .min(1)
+          .max(720)
+          .optional()
+          .describe(
+            `Recency window for done/idle/error threads (default ${DEFAULT_SINCE_HOURS}h)`,
+          ),
         limit: z
           .number()
           .int()
@@ -173,15 +193,21 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
           .max(100)
           .optional()
           .describe("Max rows (default 25)"),
+        cursor: z
+          .string()
+          .optional()
+          .describe("Opaque nextCursor from a previous list_threads call"),
       },
     },
     async (args) => {
       try {
         const shell = await getClient().shell(args.includeArchived ?? false);
         const projectsById = new Map(shell.projects.map((p) => [p.id, p]));
-        const limit = args.limit ?? 25;
-        const rows = shell.threads
-          .filter((t) => (args.includeArchived ? true : !t.archivedAt))
+        const threads = filterThreads(shell.threads, {
+          includeArchived: args.includeArchived,
+          includeInactive: args.includeInactive,
+          sinceHours: args.sinceHours,
+        })
           .filter((t) =>
             args.projectId ? t.projectId === args.projectId : true,
           )
@@ -190,19 +216,11 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
               ? attentionOf(t) === (args.attention as Attention)
               : true,
           )
-          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-          .slice(0, limit)
-          .map((t) => threadRow(t, projectsById));
-        const total = shell.threads
-          .filter((t) => args.includeArchived || !t.archivedAt)
-          .filter((t) => !args.projectId || t.projectId === args.projectId)
-          .filter(
-            (t) => !args.attention || attentionOf(t) === args.attention,
-          ).length;
+          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+        const page = paginate(threads, args.limit ?? 25, args.cursor);
         return jsonResult({
-          shown: rows.length,
-          matchedOf: total,
-          threads: rows,
+          ...pageFields(page),
+          threads: page.items.map((t) => threadRow(t, projectsById)),
         });
       } catch (e) {
         return errorResult(e);
@@ -311,8 +329,7 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
     async (args) => {
       try {
         const client = getClient();
-        const snap = await client.thread(args.threadId, { turnLimit: 1 });
-        const t = snap.thread;
+        const t = await client.detail(args.threadId);
         const command = {
           type: "thread.turn.start",
           commandId: newId(),

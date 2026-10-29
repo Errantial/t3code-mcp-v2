@@ -98,6 +98,8 @@ export const shellSchema = z.object({
   threads: z.array(threadSchema),
   archivedThreads: z.array(threadSchema).optional(),
 });
+export type RawShellSnapshot = z.infer<typeof shellSchema>;
+export type RawThreadShell = z.infer<typeof threadSchema>;
 export const projectionSchema = z
   .object({
     thread: threadSchema,
@@ -108,7 +110,7 @@ export const projectionSchema = z
     runtimeRequests: z.array(requestSchema),
     messages: z.array(base),
     plans: z.array(base),
-    turnItems: z.array(itemSchema),
+    turnItems: z.array(itemSchema).default([]),
     visibleTurnItems: z.array(visibleSchema),
   })
   .passthrough();

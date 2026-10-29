@@ -309,6 +309,7 @@ test("all 19 tools register; waits use run identity rather than latest reply", a
   });
   const handlers = tools({
     thread: async () => ({ thread: normalizeProjection(p) }),
+    detail: async () => normalizeProjection(p),
   });
   assert.equal(handlers.size, 19);
   const result = value(
@@ -344,6 +345,7 @@ test("wait returns pending request for its target run", async () => {
   });
   const handlers = tools({
     thread: async () => ({ thread: normalizeProjection(p) }),
+    detail: async () => normalizeProjection(p),
   });
   assert.equal(
     value(await handlers.get("wait_for_turn")({ threadId: "t" }, extra()))

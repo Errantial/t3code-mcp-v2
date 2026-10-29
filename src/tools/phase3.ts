@@ -11,6 +11,7 @@ import {
   threadRow,
   truncate,
 } from "../format.js";
+import { filterThreads, paginate, pageFields } from "../query.js";
 
 import { sleep } from "../wait.js";
 
@@ -55,8 +56,7 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
     },
     async (args) => {
       try {
-        const snap = await getClient().thread(args.threadId, { turnLimit: 8 });
-        const t = snap.thread;
+        const t = await getClient().detail(args.threadId);
         const attention = attentionOf(t);
         const pending = threadRequests(t);
         const messages = t.messages ?? [];
@@ -136,23 +136,38 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
       description:
         "One-line-per-thread briefing across all projects — the 'what are my agents doing' " +
         "answer. Covers threads needing attention first, then working, then recently finished. " +
-        "TTS-friendly 'spoken' field plus structured rows.",
+        "Old done/idle/error threads are excluded by default. TTS-friendly 'spoken' field plus " +
+        "structured rows. Use nextCursor to page.",
       inputSchema: {
         sinceHours: z
           .number()
           .min(1)
-          .max(168)
+          .max(720)
           .optional()
           .describe(
             "Include finished/idle threads updated within this window (default 24h)",
           ),
+        includeInactive: z
+          .boolean()
+          .optional()
+          .describe("Include old done/idle/error threads (default false)"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Max rows (default 20)"),
+        cursor: z
+          .string()
+          .optional()
+          .describe("Opaque nextCursor from a previous workspace_digest call"),
       },
     },
     async (args) => {
       try {
         const shell = await getClient().shell();
         const projectsById = new Map(shell.projects.map((p) => [p.id, p]));
-        const cutoff = Date.now() - (args.sinceHours ?? 24) * 3600_000;
         const order: Attention[] = [
           "needs-approval",
           "needs-input",
@@ -162,21 +177,16 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
           "done",
           "idle",
         ];
-        const interesting = shell.threads
-          .filter((t) => !t.archivedAt)
-          .filter((t) => {
-            const a = attentionOf(t);
-            if (a === "done" || a === "idle")
-              return Date.parse(t.updatedAt) >= cutoff;
-            return true;
-          })
-          .sort(
-            (a, b) =>
-              order.indexOf(attentionOf(a)) - order.indexOf(attentionOf(b)) ||
-              Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
-          )
-          .slice(0, 20);
-        const lines = interesting.map((t: ThreadShell) => {
+        const interesting = filterThreads(shell.threads, {
+          includeInactive: args.includeInactive,
+          sinceHours: args.sinceHours ?? 24,
+        }).sort(
+          (a, b) =>
+            order.indexOf(attentionOf(a)) - order.indexOf(attentionOf(b)) ||
+            Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+        );
+        const page = paginate(interesting, args.limit ?? 20, args.cursor);
+        const rows = page.items.map((t: ThreadShell) => {
           const project =
             projectsById.get(t.projectId)?.title ?? "unknown project";
           return (
@@ -193,13 +203,14 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
           (t) => attentionOf(t) === "working",
         ).length;
         const spoken =
-          interesting.length === 0
+          page.total === 0
             ? "All quiet — no active agent threads right now."
             : `You have ${working} thread${working === 1 ? "" : "s"} working and ${needing} ` +
-              `waiting on you. ${lines.join(" ")}`;
+              `waiting on you. ${rows.join(" ")}`;
         return jsonResult({
           spoken,
-          threads: interesting.map((t) => threadRow(t, projectsById)),
+          ...pageFields(page),
+          threads: page.items.map((t) => threadRow(t, projectsById)),
         });
       } catch (e) {
         return errorResult(e);
@@ -213,9 +224,24 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
       title: "Search threads",
       description:
         "Find threads by words from the title, project name, or branch (case-insensitive " +
-        "substring match on each word). Searches active and archived threads.",
+        "substring match on each word). Defaults to active or recent non-archived threads; " +
+        "archived and old threads are opt-in. Use nextCursor to page.",
       inputSchema: {
         query: z.string().min(1),
+        includeArchived: z
+          .boolean()
+          .optional()
+          .describe("Search archived threads too (default false)"),
+        includeInactive: z
+          .boolean()
+          .optional()
+          .describe("Include old done/idle/error threads (default false)"),
+        sinceHours: z
+          .number()
+          .min(1)
+          .max(720)
+          .optional()
+          .describe("Recency window for done/idle/error threads (default 72h)"),
         limit: z
           .number()
           .int()
@@ -223,14 +249,22 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
           .max(50)
           .optional()
           .describe("Default 10"),
+        cursor: z
+          .string()
+          .optional()
+          .describe("Opaque nextCursor from a previous search_threads call"),
       },
     },
     async (args) => {
       try {
-        const shell = await getClient().shell(true);
+        const shell = await getClient().shell(args.includeArchived ?? false);
         const projectsById = new Map(shell.projects.map((p) => [p.id, p]));
         const words = args.query.toLowerCase().split(/\s+/).filter(Boolean);
-        const matches = shell.threads
+        const matches = filterThreads(shell.threads, {
+          includeArchived: args.includeArchived,
+          includeInactive: args.includeInactive,
+          sinceHours: args.sinceHours,
+        })
           .map((t) => {
             const hay = [
               t.title ?? "",
@@ -252,9 +286,13 @@ export function registerPhase3(server: McpServer, getClient: () => T3Client) {
               b.hits - a.hits ||
               Date.parse(b.t.updatedAt) - Date.parse(a.t.updatedAt),
           )
-          .slice(0, args.limit ?? 10)
-          .map((m) => threadRow(m.t, projectsById));
-        return jsonResult({ matches: matches.length, threads: matches });
+          .map((m) => m.t);
+        const page = paginate(matches, args.limit ?? 10, args.cursor);
+        return jsonResult({
+          matches: page.total,
+          ...pageFields(page),
+          threads: page.items.map((t) => threadRow(t, projectsById)),
+        });
       } catch (e) {
         return errorResult(e);
       }
