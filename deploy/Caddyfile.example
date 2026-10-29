@@ -1,0 +1,5 @@
+# Replace the domain; DNS must resolve to this machine.
+# Merge this site block into the existing Caddy config, then validate and reload.
+mcp.example.com {
+    reverse_proxy 127.0.0.1:3774
+}

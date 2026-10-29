@@ -1,0 +1,17 @@
+# Linux systemd USER unit. Replace both absolute paths before installing.
+[Unit]
+Description=T3 Code MCP protocol v2 bridge
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABSOLUTE/INSTALL/PATH
+ExecStart=/ABSOLUTE/NODE/PATH /ABSOLUTE/INSTALL/PATH/dist/index.js --http --host 127.0.0.1 --port 3774
+Restart=on-failure
+RestartSec=5
+UMask=0077
+# For a non-default T3 data directory, set the origin in the process environment:
+# Environment=T3_ORIGIN=http://127.0.0.1:3773
+
+[Install]
+WantedBy=default.target

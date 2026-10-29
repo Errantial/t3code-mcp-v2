@@ -1,0 +1,30 @@
+{
+  "name": "t3code-mcp",
+  "version": "0.2.0",
+  "description": "MCP server for controlling a running T3 Code instance: list threads, read history, send messages, handle approvals.",
+  "type": "module",
+  "bin": {
+    "t3code-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "smoke": "node scripts/smoke.mjs",
+    "test": "pnpm build && node --test tests/*.test.mjs",
+    "integration": "node scripts/integration.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  }
+}
