@@ -2,8 +2,9 @@
 
 MCP server for a running [T3 Code](https://t3.codes) instance. See which agent threads exist and what they need, read their history, send them messages, approve their permission requests — from Claude Code, Claude Desktop, or (the end goal) a voice-controlled model like Hermes while away from a screen.
 
-**Current version: 0.3.0** — protocol v2, with provider-switch identity fixes
-and a cached/incrementally-updated thread index for large workspaces.
+**Current version: 0.4.0** — protocol v2, with provider-switch identity fixes,
+a cached/incrementally-updated thread index for large workspaces, and lossless
+full-message reads (`get_message`).
 
 This version targets **T3 orchestration protocol v2**, tested against T3 Code
 `0.1.3-v1.1.1.20261026.22512a5.linux1`. Older protocol-v1 servers are not supported.
@@ -16,7 +17,7 @@ stdio or Streamable HTTP.
 
 For installation on another machine, follow [AGENT_SETUP.md](AGENT_SETUP.md).
 Fetch this v2 port from https://github.com/Errantial/t3code-mcp-v2.
-The current 0.3.0 package is in `downloads/`; start another agent with [AGENT_PROMPT.md](AGENT_PROMPT.md).
+The current 0.4.0 package is in `downloads/`; start another agent with [AGENT_PROMPT.md](AGENT_PROMPT.md).
 The original ThomasCrund repository is upstream and does not contain this port.
 
 ```bash
@@ -46,7 +47,7 @@ pnpm build
 # restart the MCP server / service that runs dist/index.js
 ```
 
-The package version is in `package.json` (`0.3.0`). For a systemd/Caddy deploy,
+The package version is in `package.json` (`0.4.0`). For a systemd/Caddy deploy,
 rebuild and restart the unit from [deploy/](deploy/) after pulling.
 
 ## Connect from Claude Code
@@ -84,6 +85,30 @@ claude mcp add --scope user t3code -- node /Users/thomascrundwell/Documents/proj
 - Long waits support MCP cancellation. Internally, state is polled with bounded
   delays; the persistent WebSocket also powers the shell index and commands.
 
+### Full-message reads
+
+Conversation reads are capped so one MCP response stays small. Nothing is lost:
+
+- `get_thread` rows are capped at 4000 characters and `wait_for_turn` replies at
+  6000. Both accept `maxChars` to change the cap per call, and every row carries
+  `messageId`, `totalChars` and a boolean `truncated`.
+- `get_message {threadId, messageId, offset, maxChars}` returns one message in
+  slices: `{messageId, role, at, totalChars, offset, text, nextOffset, truncated}`.
+  `maxChars` defaults to 20000 (ceiling 100000). Pass `nextOffset` back as
+  `offset` until it is `null`. Slices carry no ellipsis, so concatenating them
+  reproduces the message exactly.
+- `get_message` looks a few pages back in history if the id is older than the
+  bounded recent window; otherwise it tells you to page back with `get_thread`.
+- `T3_MCP_MAX_MESSAGE_CHARS` (e.g. `20000`) overrides the built-in defaults for
+  all three; an explicit `maxChars` argument still wins. Values above 100000 are
+  clamped, invalid values are ignored.
+
+```text
+get_thread  -> messages[].messageId, .truncated, .totalChars
+get_message -> text + nextOffset, repeat until nextOffset === null
+```
+
+
 ## Large workspaces: cache, defaults and pagination
 
 - A single-thread read (`get_thread`, `thread_digest`, `wait_for_turn`) fetches
@@ -117,7 +142,7 @@ projection RPC. Actual timings scale with T3's local database size.
 
 ## Tools
 
-**Visibility** — `t3_status`, `list_projects`, `list_threads` (filter by project / attention state), `get_thread`, `search_threads`
+**Visibility** — `t3_status`, `list_projects`, `list_threads` (filter by project / attention state), `get_thread`, `get_message` (full text of one message in slices), `search_threads`
 
 **Messaging & control** — `send_message`, `create_thread`, `wait_for_turn` (send-and-wait round trip), `interrupt_thread`, `stop_thread`, `archive_thread`, `unarchive_thread`, `set_thread_title`
 
@@ -140,7 +165,7 @@ Clients connect to `http://<machine>:3774/` with `Authorization: Bearer <secret>
 ## Testing
 
 - `pnpm test` — build and run protocol/adapter/RPC regression tests.
-- `node scripts/integration.mjs <scratchProjectId> [httpUrl]` — exercise all 19
+- `node scripts/integration.mjs <scratchProjectId> [httpUrl]` — exercise all 20
   tools over stdio or Streamable HTTP, including questions, approval acceptance
   and rejection, queueing and interruption. **Use a dedicated scratch project**
   with a configured default provider/model. It starts real agent turns and

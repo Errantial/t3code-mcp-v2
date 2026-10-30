@@ -11,6 +11,12 @@ import {
   truncate,
 } from "../format.js";
 import {
+  MAX_MESSAGE_CHARS_CEILING,
+  MAX_MESSAGE_CHARS_ENV,
+  MESSAGE_DEFAULTS,
+  resolveMaxChars,
+} from "../message.js";
+import {
   DEFAULT_SINCE_HOURS,
   filterThreads,
   pageFields,
@@ -363,7 +369,8 @@ export function registerPhase2(server: McpServer, getClient: () => T3Client) {
         "Block until the thread's current turn finishes OR the agent asks for approval/input, " +
         "then return the latest assistant message or the pending request. Use after send_message " +
         "or create_thread for a single round-trip. Times out (default 120s, max 300s) with the " +
-        "current state.",
+        "current state. The reply row carries messageId, totalChars and truncated; use " +
+        "get_message for the rest.",
       inputSchema: {
         threadId: z.string(),
         runId: z
@@ -373,6 +380,15 @@ export function registerPhase2(server: McpServer, getClient: () => T3Client) {
             "Run id returned by send_message/create_thread; otherwise targets latest run at call start",
           ),
         timeoutSeconds: z.number().int().min(5).max(300).optional(),
+        maxChars: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_MESSAGE_CHARS_CEILING)
+          .optional()
+          .describe(
+            `Max characters of the reply (default ${MESSAGE_DEFAULTS.waitReply}, or ${MAX_MESSAGE_CHARS_ENV})`,
+          ),
       },
     },
     async (args, extra) => {
@@ -433,7 +449,12 @@ export function registerPhase2(server: McpServer, getClient: () => T3Client) {
               runStatus: run.status,
               sessionStatus: t.session?.status ?? "none",
               lastError: t.session?.lastError ?? null,
-              reply: assistant ? messageRow(assistant, 6000) : null,
+              reply: assistant
+                ? messageRow(
+                    assistant,
+                    resolveMaxChars(MESSAGE_DEFAULTS.waitReply, args.maxChars),
+                  )
+                : null,
             });
           }
           const remaining = deadline - Date.now();

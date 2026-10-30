@@ -12,6 +12,12 @@ import {
   threadRow,
 } from "../format.js";
 import {
+  MAX_MESSAGE_CHARS_CEILING,
+  MAX_MESSAGE_CHARS_ENV,
+  MESSAGE_DEFAULTS,
+  sliceMessage,
+} from "../message.js";
+import {
   DEFAULT_SINCE_HOURS,
   filterThreads,
   pageFields,
@@ -235,7 +241,9 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
       description:
         "Read a thread's bounded recent conversation window, session status, " +
         "any pending approval/user-input requests (with requestIds needed to respond), and an " +
-        "activity overview. Use beforeCursor from a previous call to page further back.",
+        "activity overview. Use beforeCursor from a previous call to page further back. Every " +
+        "message row carries messageId, totalChars and truncated; when truncated is true, read " +
+        "the rest with get_message.",
       inputSchema: {
         threadId: z.string().describe("Thread id (from list_threads)"),
         turnLimit: z
@@ -255,6 +263,15 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
           .boolean()
           .optional()
           .describe("Include per-activity detail overview (default true)"),
+        maxChars: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_MESSAGE_CHARS_CEILING)
+          .optional()
+          .describe(
+            `Max characters per message row (default ${MESSAGE_DEFAULTS.threadRow}, or ${MAX_MESSAGE_CHARS_ENV})`,
+          ),
       },
     },
     async (args) => {
@@ -290,12 +307,91 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
           runtimeMode: t.runtimeMode,
           interactionMode: t.interactionMode,
           pendingRequests: pending,
-          messages: (t.messages ?? []).map((m) => messageRow(m)),
+          messages: (t.messages ?? []).map((m) =>
+            messageRow(m, args.maxChars),
+          ),
           ...(args.includeActivities === false
             ? {}
             : { activities: activityOverview(t.activities ?? []) }),
           page: snap.page ?? null,
         });
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_message",
+    {
+      title: "Read one message in full",
+      description:
+        "Read a single message by id, in slices, with no lossy truncation. get_thread and " +
+        "wait_for_turn return messageId and totalChars on every row; when a row is truncated, " +
+        "call this repeatedly with the returned nextOffset until it is null. Defaults to " +
+        `${MESSAGE_DEFAULTS.getMessage} chars per call (${MAX_MESSAGE_CHARS_ENV} overrides it, ` +
+        `hard ceiling ${MAX_MESSAGE_CHARS_CEILING}).`,
+      inputSchema: {
+        threadId: z.string().describe("Thread id (from list_threads)"),
+        messageId: z
+          .string()
+          .describe("Message id (messageId on a get_thread/wait_for_turn row)"),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("Character offset to start at (default 0; use nextOffset)"),
+        maxChars: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_MESSAGE_CHARS_CEILING)
+          .optional()
+          .describe(
+            `Max characters to return in this slice (default ${MESSAGE_DEFAULTS.getMessage})`,
+          ),
+      },
+    },
+    async (args) => {
+      try {
+        const client = getClient();
+        // The message may sit just outside the bounded recent window, so walk
+        // back a few server pages before giving up.
+        const maxPages = 10;
+        let snap = await client.thread(args.threadId);
+        let message = (snap.thread.messages ?? []).find(
+          (m) => m.id === args.messageId,
+        );
+        let pages = 1;
+        while (
+          !message &&
+          snap.page?.hasMore &&
+          snap.page.beforeCursor &&
+          pages < maxPages
+        ) {
+          snap = await client.thread(args.threadId, {
+            beforeCursor: snap.page.beforeCursor,
+          });
+          message = (snap.thread.messages ?? []).find(
+            (m) => m.id === args.messageId,
+          );
+          pages++;
+        }
+        if (!message)
+          return errorResult(
+            new Error(
+              `No message ${args.messageId} on thread ${args.threadId} in the last ` +
+                `${pages} page(s) of history. Check the id against get_thread, or page ` +
+                `further back with get_thread's beforeCursor.`,
+            ),
+          );
+        return jsonResult(
+          sliceMessage(message, {
+            offset: args.offset,
+            maxChars: args.maxChars,
+          }),
+        );
       } catch (e) {
         return errorResult(e);
       }

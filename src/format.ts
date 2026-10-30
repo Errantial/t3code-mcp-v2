@@ -1,5 +1,6 @@
 import type { Project, ThreadShell, Message, Activity } from "./model.js";
 import { attentionOf } from "./model.js";
+import { MESSAGE_DEFAULTS, resolveMaxChars } from "./message.js";
 
 export function truncate(text: string, max: number): { text: string; truncated: boolean } {
   if (text.length <= max) return { text, truncated: false };
@@ -49,12 +50,22 @@ export function threadRow(t: ThreadShell, projectsById: Map<string, Project>) {
   };
 }
 
-export function messageRow(m: Message, maxChars = 4000) {
-  const { text, truncated } = truncate(m.text ?? "", maxChars);
+/**
+ * Compact message row. Always carries the id and full length so a caller can
+ * fetch the rest with `get_message` when `truncated` is true.
+ */
+export function messageRow(m: Message, maxChars?: number) {
+  const full = m.text ?? "";
+  const { text, truncated } = truncate(
+    full,
+    resolveMaxChars(MESSAGE_DEFAULTS.threadRow, maxChars),
+  );
   return {
+    messageId: m.id,
     role: m.role,
     text,
-    ...(truncated ? { truncated: true } : {}),
+    truncated,
+    totalChars: full.length,
     ...(m.streaming ? { streaming: true } : {}),
     at: m.createdAt,
     ago: relTime(m.createdAt),

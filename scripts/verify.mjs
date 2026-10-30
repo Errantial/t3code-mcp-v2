@@ -28,7 +28,7 @@ try {
     `Expected t3code-mcp ${expectedVersion} from package.json`,
   );
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 19);
+  assert.equal(tools.tools.length, 20);
   async function call(name, args = {}) {
     const r = await client.callTool({ name, arguments: args });
     assert.ok(!r.isError, `${name} failed: ${r.content?.[0]?.text}`);

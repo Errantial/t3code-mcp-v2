@@ -8,7 +8,7 @@ import { registerPhase2 } from "./tools/phase2.js";
 import { registerPhase3 } from "./tools/phase3.js";
 import { startHttp } from "./http.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 let client: T3Client | undefined;
 const getClient = () => (client ??= makeClient());

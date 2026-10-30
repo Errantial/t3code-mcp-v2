@@ -287,7 +287,7 @@ test("message dispatch preserves modes and queues without escalating permission"
   assert.equal(commands[0].createdBy, "user");
   assert.equal(result.runId, "new");
 });
-test("all 19 tools register; waits use run identity rather than latest reply", async () => {
+test("all 20 tools register; waits use run identity rather than latest reply", async () => {
   const p = projection({
     runs: [run("new", "completed", 2), run("old", "completed", 1)],
     visibleTurnItems: [
@@ -311,7 +311,7 @@ test("all 19 tools register; waits use run identity rather than latest reply", a
     thread: async () => ({ thread: normalizeProjection(p) }),
     detail: async () => normalizeProjection(p),
   });
-  assert.equal(handlers.size, 19);
+  assert.equal(handlers.size, 20);
   const result = value(
     await handlers.get("wait_for_turn")(
       { threadId: "t", runId: "old", timeoutSeconds: 5 },

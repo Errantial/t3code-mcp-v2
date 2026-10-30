@@ -94,6 +94,17 @@ try {
   ok("get_thread", Array.isArray(thread.messages) && thread.messages.length > 0,
     `${thread.messages.length} msgs, attention=${thread.attention}`);
 
+  const first = thread.messages[0];
+  const slice = await call("get_message", {
+    threadId: tid,
+    messageId: first.messageId,
+    maxChars: 20,
+  });
+  ok("get_message", slice.messageId === first.messageId &&
+    slice.totalChars === first.totalChars &&
+    slice.text === first.text.slice(0, slice.text.length),
+    `${slice.text.length}/${slice.totalChars} chars, next=${slice.nextOffset}`);
+
   const pendingActions = await call("pending_actions");
   ok("pending_actions", typeof pendingActions.needsAttention === "number",
     `${pendingActions.needsAttention} threads need attention`);

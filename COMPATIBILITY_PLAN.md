@@ -146,3 +146,22 @@ Implemented and deployed as t3code-mcp 0.3.0. Build, 32 regression tests, and al
 Approval acceptance/decline and questions/answers were exercised with real agent
 requests in a dedicated scratch project. Credentials and endpoint are unchanged.
 See README.md for v2 behavior and SETUP.md for deployment and rollback details.
+
+## Full-message reads — 2026-10-30 (0.4.0)
+
+Message text used to be hard-capped with no way to fetch the remainder: `get_thread`
+rows at 4000 characters, `wait_for_turn` replies at 6000, and rows carried no id.
+0.4.0 makes truncation recoverable:
+
+- `get_message` reads one message by id in slices (`offset`, `maxChars` default
+  20000, ceiling 100000) and returns `messageId`, `role`, `at`, `totalChars`,
+  `offset`, `text`, `nextOffset` and `truncated`. Slices contain no ellipsis, so
+  they concatenate back to the exact text.
+- Every `get_thread` and `wait_for_turn` row now carries `messageId`,
+  `totalChars` and a boolean `truncated`.
+- `get_thread` and `wait_for_turn` accept `maxChars` (per message / reply) and
+  keep their previous defaults when it is omitted.
+- `T3_MCP_MAX_MESSAGE_CHARS` overrides those defaults process-wide.
+- 14 new regression tests cover slicing, offset clamping, `nextOffset`
+  termination, the env override and both tool paths (46 total).
+

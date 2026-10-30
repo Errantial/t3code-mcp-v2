@@ -59,8 +59,8 @@ async function create(message, mode = "default") {
 }
 try {
   const list = await client.listTools();
-  assert.equal(list.tools.length, 19);
-  ok("19 tools");
+  assert.equal(list.tools.length, 20);
+  ok("20 tools");
   const status = await call("t3_status");
   assert.equal(status.authOk, true);
   assert.equal(status.readCompatible, true);

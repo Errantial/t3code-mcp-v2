@@ -2,7 +2,7 @@
 
 ## Task and authoritative source
 
-Install this **t3code-mcp 0.3.0 v2 port** on the destination machine and verify it
+Install this **t3code-mcp 0.4.0 v2 port** on the destination machine and verify it
 against that machine's running T3 Code instance. Preserve any existing services.
 Report the actual working endpoint, transport, credential-file location and
 verification results when finished.
@@ -13,8 +13,8 @@ source of this v2 package. Do not substitute an upstream clone for this port.
 
 Direct package downloads (no GitHub login required for the public repository):
 
-- Archive: https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.3.0.tar.gz
-- Checksum: https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.3.0.tar.gz.sha256
+- Archive: https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.4.0.tar.gz
+- Checksum: https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.4.0.tar.gz.sha256
 - Agent prompt: https://github.com/Errantial/t3code-mcp-v2/blob/main/AGENT_PROMPT.md
 
 The archive includes the complete source, lockfile, tests and deployment templates.
@@ -56,14 +56,14 @@ installation. The following commands assume a Unix-like shell:
 
 ```bash
 # Download the exact v2 package from the dedicated GitHub repository.
-curl --fail --location --output t3code-mcp-v2-0.3.0.tar.gz \
-  https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.3.0.tar.gz
-curl --fail --location --output t3code-mcp-v2-0.3.0.tar.gz.sha256 \
-  https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.3.0.tar.gz.sha256
-sha256sum -c t3code-mcp-v2-0.3.0.tar.gz.sha256
-# macOS alternative: shasum -a 256 -c t3code-mcp-v2-0.3.0.tar.gz.sha256
+curl --fail --location --output t3code-mcp-v2-0.4.0.tar.gz \
+  https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.4.0.tar.gz
+curl --fail --location --output t3code-mcp-v2-0.4.0.tar.gz.sha256 \
+  https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.4.0.tar.gz.sha256
+sha256sum -c t3code-mcp-v2-0.4.0.tar.gz.sha256
+# macOS alternative: shasum -a 256 -c t3code-mcp-v2-0.4.0.tar.gz.sha256
 mkdir -p "$HOME/apps"
-tar -xzf t3code-mcp-v2-0.3.0.tar.gz -C "$HOME/apps"
+tar -xzf t3code-mcp-v2-0.4.0.tar.gz -C "$HOME/apps"
 cd "$HOME/apps/t3code-mcp-v2"
 node --version
 pnpm install --frozen-lockfile
@@ -74,7 +74,7 @@ If pnpm is unavailable, use `npx --yes pnpm@12.16.1` in place of `pnpm`.
 The `test` script runs `tsc && node --test tests/*.test.mjs`; if invoking via
 npx, run `npx --yes pnpm@12.16.1 build` followed by
 `node --test tests/*.test.mjs` as separate commands instead. Confirm
-`package.json` version is `0.3.0` and
+`package.json` version is `0.4.0` and
 `src/rpc.ts` and `src/v2.ts` exist. The source must compile and all regression
 tests must pass before deployment. Do not claim v2 support just because MCP
 initialization or tool listing succeeds.
@@ -124,7 +124,7 @@ node scripts/verify.mjs http://127.0.0.1:3774/
 ```
 
 The verifier checks invalid/missing credentials return 401, discovers exactly
-19 tools, and makes actual T3 read calls. It requires `t3_status` fields
+20 tools, and makes actual T3 read calls. It requires `t3_status` fields
 `running`, `authOk`, `readCompatible`, `commandChannelReady`, and `canOperate`
 to all be true, with orchestration protocol 2. It prints version/readiness data
 without printing tokens or conversation contents.
@@ -216,7 +216,7 @@ node scripts/integration.mjs SCRATCH_PROJECT_ID https://YOUR-MCP-DOMAIN/
 ```
 
 These tests start real agent turns and may incur provider charges. They exercise
-all 19 tools, including create/follow-up, exact-run waiting, busy queue,
+all 20 tools, including create/follow-up, exact-run waiting, busy queue,
 interruption, session restart/stop, archive/unarchive, rename/search, digests,
 questions/answers, stale responses and accepted/declined harmless approvals.
 They archive the disposable threads afterward. If the destination uses another
@@ -246,4 +246,4 @@ working deployment with upstream protocol-v1 code.
 Behavior to communicate: history uses bounded pages and opaque cursors;
 `turnLimit` is a legacy hint. Message submission queues behind active work.
 Use returned run IDs when waiting for a particular reply. Worktree selection
-and image attachments are not exposed by these 19 tools.
+and image attachments are not exposed by these 20 tools.
