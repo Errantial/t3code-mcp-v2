@@ -74,7 +74,7 @@ If pnpm is unavailable, use `npx --yes pnpm@12.16.1` in place of `pnpm`.
 The `test` script runs `tsc && node --test tests/*.test.mjs`; if invoking via
 npx, run `npx --yes pnpm@12.16.1 build` followed by
 `node --test tests/*.test.mjs` as separate commands instead. Confirm
-`package.json` version is `0.4.0` and
+`package.json` version is `0.5.0` and
 `src/rpc.ts` and `src/v2.ts` exist. The source must compile and all regression
 tests must pass before deployment. Do not claim v2 support just because MCP
 initialization or tool listing succeeds.

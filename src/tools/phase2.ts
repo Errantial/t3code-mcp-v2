@@ -8,6 +8,7 @@ import {
   jsonResult,
   messageRow,
   relTime,
+  threadRow,
   truncate,
 } from "../format.js";
 import {
@@ -24,6 +25,7 @@ import {
 } from "../query.js";
 
 import { sleep } from "../wait.js";
+import { optionalInstructionsPrefix } from "../instructions.js";
 
 function needsHuman(t: ThreadShell): boolean {
   const a = attentionOf(t);
@@ -510,6 +512,97 @@ export function registerPhase2(server: McpServer, getClient: () => T3Client) {
           threadId: args.threadId,
         });
         return jsonResult({ unarchived: true, sequence: result.sequence });
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "save_thread",
+    {
+      title: "Save a thread for later",
+      description:
+        "Shelve a thread: remove it from the active list and keep it in Saved. " +
+        "Settling is separate; restoring returns it to its prior state.",
+      inputSchema: { threadId: z.string() },
+    },
+    async (args) => {
+      try {
+        const result = await getClient().dispatch({
+          type: "thread.save",
+          commandId: newId(),
+          threadId: args.threadId,
+        });
+        return jsonResult({ saved: true, sequence: result.sequence });
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "unsave_thread",
+    {
+      title: "Restore a saved thread",
+      description: "Bring a Saved thread back to the active/settled list it came from.",
+      inputSchema: { threadId: z.string() },
+    },
+    async (args) => {
+      try {
+        const result = await getClient().dispatch({
+          type: "thread.unsave",
+          commandId: newId(),
+          threadId: args.threadId,
+        });
+        return jsonResult({ restored: true, sequence: result.sequence });
+      } catch (e) {
+        return errorResult(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_saved_threads",
+    {
+      title: "List saved threads",
+      description:
+        "List threads shelved with save_thread, newest saved first. Each row is " +
+        "a normal thread summary; use unsave_thread to restore one.",
+      inputSchema: {
+        projectId: z.string().optional().describe("Only threads in this project"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Max rows (default 25)"),
+        cursor: z
+          .string()
+          .optional()
+          .describe("Opaque nextCursor from a previous list_saved_threads call"),
+      },
+    },
+    async (args) => {
+      try {
+        const shell = await getClient().shell(false);
+        const projectsById = new Map(shell.projects.map((p) => [p.id, p]));
+        const saved = shell.threads
+          .filter((t) => t.savedAt != null)
+          .filter((t) =>
+            args.projectId ? t.projectId === args.projectId : true,
+          )
+          .sort(
+            (a, b) =>
+              Date.parse(b.savedAt ?? b.updatedAt) -
+              Date.parse(a.savedAt ?? a.updatedAt),
+          );
+        const page = paginate(saved, args.limit ?? 25, args.cursor);
+        return jsonResult({
+          ...pageFields(page),
+          threads: page.items.map((t) => threadRow(t, projectsById)),
+        });
       } catch (e) {
         return errorResult(e);
       }

@@ -12,6 +12,7 @@ import { T3Rpc } from "../dist/rpc.js";
 import { registerPhase1 } from "../dist/tools/phase1.js";
 import { registerPhase2 } from "../dist/tools/phase2.js";
 import { registerPhase3 } from "../dist/tools/phase3.js";
+import { registerInstructions } from "../dist/tools/instructions.js";
 import { sleep } from "../dist/wait.js";
 
 const now = "2026-10-29T12:00:00.000Z";
@@ -75,7 +76,12 @@ function tools(client) {
       handlers.set(name, handler);
     },
   };
-  for (const register of [registerPhase1, registerPhase2, registerPhase3])
+  for (const register of [
+    registerPhase1,
+    registerPhase2,
+    registerPhase3,
+    registerInstructions,
+  ])
     register(server, () => client);
   return handlers;
 }
@@ -287,7 +293,7 @@ test("message dispatch preserves modes and queues without escalating permission"
   assert.equal(commands[0].createdBy, "user");
   assert.equal(result.runId, "new");
 });
-test("all 20 tools register; waits use run identity rather than latest reply", async () => {
+test("all 32 tools register; waits use run identity rather than latest reply", async () => {
   const p = projection({
     runs: [run("new", "completed", 2), run("old", "completed", 1)],
     visibleTurnItems: [
@@ -311,7 +317,7 @@ test("all 20 tools register; waits use run identity rather than latest reply", a
     thread: async () => ({ thread: normalizeProjection(p) }),
     detail: async () => normalizeProjection(p),
   });
-  assert.equal(handlers.size, 20);
+  assert.equal(handlers.size, 32);
   const result = value(
     await handlers.get("wait_for_turn")(
       { threadId: "t", runId: "old", timeoutSeconds: 5 },
@@ -872,4 +878,41 @@ test("RPC rejects timeouts without automatically duplicating a command", async (
     rpc.close();
     globalThis.WebSocket = Original;
   }
+});
+
+test("save and unsave dispatch new commands; list_saved_threads filters", async () => {
+  const calls = [];
+  const client = {
+    dispatch: async (command) => {
+      calls.push(command);
+      return { sequence: 1 };
+    },
+    shell: async () => ({
+      snapshotSequence: 1,
+      projects: [{ id: "p", title: "p", workspaceRoot: "/tmp" }],
+      threads: [
+        { ...thread, savedAt: now },
+        { ...thread, id: "t2", savedAt: null },
+      ],
+    }),
+  };
+  const handlers = tools(client);
+  assert.equal(
+    value(await handlers.get("save_thread")({ threadId: "t" }, extra())).saved,
+    true,
+  );
+  assert.equal(
+    value(await handlers.get("unsave_thread")({ threadId: "t" }, extra()))
+      .restored,
+    true,
+  );
+  assert.deepEqual(
+    calls.map((command) => command.type),
+    ["thread.save", "thread.unsave"],
+  );
+  const saved = value(
+    await handlers.get("list_saved_threads")({}, extra()),
+  );
+  assert.equal(saved.threads.length, 1);
+  assert.equal(saved.threads[0].threadId, "t");
 });

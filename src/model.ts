@@ -80,6 +80,9 @@ export interface ThreadShell {
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
+  settledAt?: string | null;
+  settledOverride?: "settled" | "active" | null;
+  savedAt?: string | null;
   snoozedUntil?: string | null;
   pinnedAt?: string | null;
   latestUserMessageAt?: string | null;

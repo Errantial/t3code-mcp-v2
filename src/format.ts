@@ -38,6 +38,7 @@ export function threadRow(t: ThreadShell, projectsById: Map<string, Project>) {
     branch: t.branch ?? null,
     worktree: t.worktreePath ? true : false,
     archived: t.archivedAt ? true : false,
+    savedAt: t.savedAt ?? null,
     updated: relTime(t.updatedAt),
     updatedAt: t.updatedAt,
     ...(t.planProgress

@@ -184,6 +184,12 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
           .describe(
             "Include old done/idle/error threads (default false: only active or recent)",
           ),
+        saved: z
+          .boolean()
+          .optional()
+          .describe(
+            "true: only saved threads; false/omitted: hide saved threads",
+          ),
         sinceHours: z
           .number()
           .min(1)
@@ -217,6 +223,7 @@ export function registerPhase1(server: McpServer, getClient: () => T3Client) {
           .filter((t) =>
             args.projectId ? t.projectId === args.projectId : true,
           )
+          .filter((t) => (args.saved ? t.savedAt != null : t.savedAt == null))
           .filter((t) =>
             args.attention
               ? attentionOf(t) === (args.attention as Attention)

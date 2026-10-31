@@ -2,7 +2,7 @@
 
 MCP server for a running [T3 Code](https://t3.codes) instance. See which agent threads exist and what they need, read their history, send them messages, approve their permission requests — from Claude Code, Claude Desktop, or (the end goal) a voice-controlled model like Hermes while away from a screen.
 
-**Current version: 0.4.0** — protocol v2, with provider-switch identity fixes,
+**Current version: 0.5.0** — protocol v2, with provider-switch identity fixes,
 a cached/incrementally-updated thread index for large workspaces, and lossless
 full-message reads (`get_message`).
 
@@ -17,7 +17,7 @@ stdio or Streamable HTTP.
 
 For installation on another machine, follow [AGENT_SETUP.md](AGENT_SETUP.md).
 Fetch this v2 port from https://github.com/Errantial/t3code-mcp-v2.
-The current 0.4.0 package is in `downloads/`; start another agent with [AGENT_PROMPT.md](AGENT_PROMPT.md).
+The current 0.5.0 package is in `downloads/`; start another agent with [AGENT_PROMPT.md](AGENT_PROMPT.md).
 The original ThomasCrund repository is upstream and does not contain this port.
 
 ```bash
@@ -47,7 +47,7 @@ pnpm build
 # restart the MCP server / service that runs dist/index.js
 ```
 
-The package version is in `package.json` (`0.4.0`). For a systemd/Caddy deploy,
+The package version is in `package.json` (`0.5.0`). For a systemd/Caddy deploy,
 rebuild and restart the unit from [deploy/](deploy/) after pulling.
 
 ## Connect from Claude Code
@@ -165,7 +165,7 @@ Clients connect to `http://<machine>:3774/` with `Authorization: Bearer <secret>
 ## Testing
 
 - `pnpm test` — build and run protocol/adapter/RPC regression tests.
-- `node scripts/integration.mjs <scratchProjectId> [httpUrl]` — exercise all 20
+- `node scripts/integration.mjs <scratchProjectId> [httpUrl]` — exercise all 32
   tools over stdio or Streamable HTTP, including questions, approval acceptance
   and rejection, queueing and interruption. **Use a dedicated scratch project**
   with a configured default provider/model. It starts real agent turns and

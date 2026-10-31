@@ -1,4 +1,11 @@
 import { z } from "zod";
+import type {
+  InstructionFile,
+  InstructionPutInput,
+  InstructionSnapshot,
+  InstructionSync,
+  InstructionSyncTarget,
+} from "./instructions.js";
 import { discoverOrigin, loadToken, ConfigError } from "./config.js";
 import type { ShellSnapshot, ThreadDetailSnapshot } from "./model.js";
 import { isProviderScopedThreadId } from "./model.js";
@@ -115,6 +122,47 @@ export class T3Client {
       throw new T3Error(`T3 liveness probe returned HTTP ${response.status}`);
     return (await response.json()) as EnvironmentInfo;
   }
+
+  /** Instruction library plus sync targets and per-thread optional attachments. */
+  async instructions(): Promise<InstructionSnapshot> {
+    return (await this.req("/api/instructions")) as InstructionSnapshot;
+  }
+
+  async putInstruction(body: InstructionPutInput): Promise<{ file: InstructionFile }> {
+    return (await this.req("/api/instructions/files", {
+      method: "POST",
+      body: JSON.stringify(body),
+    })) as { file: InstructionFile };
+  }
+
+  async setInstructionSync(body: {
+    id?: string;
+    fileId: string;
+    targets: ReadonlyArray<InstructionSyncTarget>;
+  }): Promise<{ sync: InstructionSync }> {
+    return (await this.req("/api/instructions/syncs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    })) as { sync: InstructionSync };
+  }
+
+  async removeInstructionSync(id: string): Promise<{ removed: boolean }> {
+    return (await this.req("/api/instructions/syncs/remove", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    })) as { removed: boolean };
+  }
+
+  async setThreadAttachments(
+    threadId: string,
+    fileIds: ReadonlyArray<string>,
+  ): Promise<{ fileIds: string[] }> {
+    return (await this.req("/api/instructions/attachments", {
+      method: "POST",
+      body: JSON.stringify({ threadId, fileIds }),
+    })) as { fileIds: string[] };
+  }
+
   async shell(
     includeArchived = false,
     signal?: AbortSignal,
