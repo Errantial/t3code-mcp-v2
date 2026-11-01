@@ -9,7 +9,7 @@ import { registerPhase3 } from "./tools/phase3.js";
 import { registerInstructions } from "./tools/instructions.js";
 import { startHttp } from "./http.js";
 
-const VERSION = "0.5.0";
+const VERSION = "0.5.1";
 
 let client: T3Client | undefined;
 const getClient = () => (client ??= makeClient());

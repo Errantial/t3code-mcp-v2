@@ -1,6 +1,6 @@
 # Copy this prompt to the agent on the destination machine
 
-Install and verify t3code-mcp 0.5.0 with T3 orchestration protocol v2 support on
+Install and verify t3code-mcp 0.5.1 with T3 orchestration protocol v2 support on
 this machine. Fetch the actual implementation remotely from this public GitHub
 repository:
 
@@ -12,9 +12,9 @@ https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/AGENT_SETUP.md
 
 Download this exact package and checksum with `curl --fail --location`:
 
-https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.5.0.tar.gz
+https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.5.1.tar.gz
 
-https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.5.0.tar.gz.sha256
+https://raw.githubusercontent.com/Errantial/t3code-mcp-v2/main/downloads/t3code-mcp-v2-0.5.1.tar.gz.sha256
 
 Verify the checksum before extracting. The original ThomasCrund/t3code-mcp
 repository is upstream; cloning it alone will not install this v2 port.

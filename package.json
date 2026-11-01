@@ -1,6 +1,6 @@
 {
   "name": "t3code-mcp",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "MCP server for controlling a running T3 Code instance: list threads, read history, send messages, handle approvals.",
   "type": "module",
   "bin": {

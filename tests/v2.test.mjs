@@ -527,7 +527,7 @@ test("list_threads keeps one row for a switched thread and updates provider/mode
       updatedAt: now,
     }),
   });
-  const result = value(await handlers.get("list_threads")({ limit: 10 }));
+  const result = value(await handlers.get("list_threads")({ limit: 10, includeInactive: true }));
   assert.equal(result.shown, 1);
   assert.equal(result.threads.length, 1);
   assert.equal(result.threads[0].threadId, "t");
