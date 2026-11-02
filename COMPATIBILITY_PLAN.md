@@ -165,3 +165,35 @@ rows at 4000 characters, `wait_for_turn` replies at 6000, and rows carried no id
 - 14 new regression tests cover slicing, offset clamping, `nextOffset`
   termination, the env override and both tool paths (46 total).
 
+
+## Thread-index freshness — 2026-11-02 (0.4.1)
+
+Incident: on the laptop bridge, `list_threads` / `search_threads` / `t3_status`
+froze at ~20:14Z while `get_thread` (full id) kept working. Two threads launched
+later via `create_thread` never appeared in lists. Causes:
+
+1. `ThreadIndex.ensure()` only reloaded when `!live`; once the
+   `orchestration.subscribeShell` stream had delivered one chunk, a stream that
+   stalled without closing left the index frozen for the process lifetime.
+2. `T3Client.launch()` (`orchestration.launchThread`) bypassed `command()`, so
+   `create_thread` never invalidated the index.
+
+Fixes:
+
+- `maxAgeMs` (default 45 s): reads reload the HTTP shell snapshot once it is
+  older than this, regardless of the stream state.
+- Stream watchdog (`watchdogMs`, default 5 min, interval timer, `unref`'d):
+  a subscription with no stream items for that long is aborted and restarted
+  from the current sequence; the next read also reconciles (`dirty`).
+- Aborting an RPC stream now sends an Effect RPC `Interrupt` frame so T3 stops
+  the server-side fiber (verified against T3 v1.1.8: replies `Exit` with an
+  Interrupt cause, socket stays usable).
+- `launch()` calls `index.refreshUntil(threadId)`: reloads and retries
+  (4 × 250 ms) until the new thread is listed. `create_thread` returns T3's
+  `threadId` from the launch response.
+- `stats()` adds `indexAgeMs`, `lastStreamItemAgeMs`, `streamRestarts`.
+- 5 new tests in `tests/cache-freshness.test.mjs`.
+
+Known pre-existing failure on this line: `list_threads keeps one row for a
+switched thread…` (v2.test.mjs) uses a date fixture that has aged out of the
+default thread window; fixed on main in ae12ac5 (0.5.1).

@@ -289,7 +289,8 @@ export function registerPhase2(server: McpServer, getClient: () => T3Client) {
         });
         return jsonResult({
           created: true,
-          threadId,
+          // T3 owns the id; it can differ from the requested one (e.g. launch ids).
+          threadId: result.threadId ?? threadId,
           title,
           project: project.title,
           model: `${modelSelection.instanceId}/${modelSelection.model}`,

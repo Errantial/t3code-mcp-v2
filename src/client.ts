@@ -50,11 +50,12 @@ export class T3Client {
         shellSchema.parse(
           await this.rpc.call("orchestration.getArchivedShellSnapshot", {}),
         ),
-      subscribe: (afterSequence, onItems) =>
+      subscribe: (afterSequence, onItems, signal) =>
         this.rpc.stream(
           "orchestration.subscribeShell",
           { afterSequence },
           (values) => onItems(values as ShellStreamItem[]),
+          signal,
         ),
     });
   }
@@ -362,6 +363,10 @@ export class T3Client {
           60_000,
         ),
       );
+    // launchThread is not routed through command(), so it never invalidated
+    // the index: a new thread stayed invisible to list/search until some other
+    // mutation or a stream delta arrived. Reload now and wait for the new id.
+    await this.index.refreshUntil(raw.threadId);
     const run = raw.projection.runs
       .slice()
       .sort((a, b) => b.ordinal - a.ordinal)[0];

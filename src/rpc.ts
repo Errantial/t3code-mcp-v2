@@ -177,6 +177,16 @@ export class T3Rpc {
       };
       const abort = () => {
         if (!this.pending.delete(id)) return;
+        // Tell T3 to stop the server-side stream fiber too; otherwise every
+        // cancelled subscription keeps streaming into an unknown request id.
+        try {
+          if (socket.readyState === WebSocket.OPEN)
+            socket.send(
+              JSON.stringify({ _tag: "Interrupt", requestId: id, interruptors: [] }),
+            );
+        } catch {
+          // Socket already gone; nothing to interrupt.
+        }
         finish(new Error("MCP request cancelled"));
       };
       this.pending.set(id, {
